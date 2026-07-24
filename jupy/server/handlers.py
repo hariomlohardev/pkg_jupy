@@ -1,8 +1,11 @@
 import json
 import os
 import threading
+import time
 from http.server import SimpleHTTPRequestHandler
+from jupy.core.autocomplete import get_completions
 from jupy.core.kernel import kernel
+from jupy.core.metrics import get_system_metrics
 from jupy.core.terminal import TerminalSession
 from jupy.core.venv import VENV_DIR
 from jupy.server.protocol import make_ws_accept, make_ws_frame, parse_ws_frame
@@ -25,7 +28,6 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 line = data.get("line", 1)
                 col = data.get("column", 0)
 
-                # Correct IPC call into persistent kernel worker process
                 comps = kernel.get_completions(code, line, col)
                 self._send_json({"completions": comps})
             else:
@@ -48,12 +50,37 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 self.handle_run_ws()
             elif self.path == "/ws/terminal":
                 self.handle_terminal_ws()
+            elif self.path == "/ws/metrics":
+                self.handle_metrics_ws()
             return
 
         if self.path == "/api/status":
             self._send_json({"status": "ready", "exec_count": kernel.exec_count, "venv": VENV_DIR})
         else:
             super().do_GET()
+
+    def handle_metrics_ws(self):
+        """Streams 5-second moving average hardware usage every 5 seconds over WebSocket."""
+        ws_lock = threading.Lock()
+
+        def stream_loop():
+            while True:
+                try:
+                    data = get_system_metrics()
+                    frame = make_ws_frame(json.dumps(data))
+                    with ws_lock:
+                        self.wfile.write(frame)
+                        self.wfile.flush()
+                    time.sleep(5.0)  # Updated: Exactly 5 seconds between updates
+                except Exception:
+                    break
+
+        threading.Thread(target=stream_loop, daemon=True).start()
+
+        while True:
+            msg, opcode = parse_ws_frame(self.rfile)
+            if opcode == 0x8 or msg is None:
+                break
 
     def handle_run_ws(self):
         ws_lock = threading.Lock()

@@ -2,6 +2,7 @@ import { initTheme } from './theme.js';
 import { createRunSocket } from './websocket.js';
 import { setupTerminal } from './terminal.js';
 import { registerAutocomplete } from './autocomplete.js';
+import { initMetricsStream } from './metrics.js';
 
 (() => {
   const container = document.getElementById('notebook');
@@ -29,6 +30,7 @@ import { registerAutocomplete } from './autocomplete.js';
   let pendingD = false;
 
   initTheme(themeToggleBtn);
+  initMetricsStream(); // Start 100ms real-time system metrics stream
 
   const runSocket = createRunSocket((data) => {
     if (!runningCellId) return;
@@ -91,7 +93,6 @@ import { registerAutocomplete } from './autocomplete.js';
     });
     cell.cm = cm;
 
-    // Attach Autocomplete Listener
     registerAutocomplete(cm);
 
     cm.on('focus', () => enterEditMode(cell.id));
@@ -419,17 +420,11 @@ import { registerAutocomplete } from './autocomplete.js';
     else if (k === 'arrowdown') { e.preventDefault(); selectAdjacent(1); }
   });
 
-  // Initial Autocomplete Demo Cell
+  // Demo Cell
   insertCellAt(0, [
-    '# JUPY - VS CODE AUTOCOMPLETE DEMO',
-    '# Try typing: np., plt., or math.',
-    'import numpy as np',
-    'import matplotlib.pyplot as plt',
-    'import math',
-    '',
-    'x = np.linspace(0, 10, 100)',
-    'y = np.sin(x)',
-    'print("Type np. or math. to trigger IntelliSense!")',
+    '# JUPY - REAL-TIME HARDWARE METRICS MONITOR',
+    'import time',
+    'print("Check the bottom footer bar for real-time CPU, RAM, & GPU metrics!")',
   ].join('\n'));
   selectCell(cells[0].id);
 })();

@@ -7,7 +7,7 @@ import threading
 import time
 from jupy.core.venv import VENV_PYTHON
 
-# Persistent Kernel Worker Process Script with Pre-warmed Jedi Engine
+# Persistent Kernel Worker Process Script
 KERNEL_WORKER_SCRIPT = r"""
 import sys, io, ast, base64, json, traceback, builtins, warnings, re, keyword, importlib, threading
 
@@ -15,7 +15,6 @@ warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 
 namespace = {"__name__": "__main__"}
 
-# Pre-warm Jedi in a background thread for zero-latency first-keystroke completions
 def _warmup_jedi():
     try:
         import jedi
@@ -88,7 +87,6 @@ def _get_worker_completions(code, line, col):
                 elif item and item != '*':
                     local_imports[item] = f"{mod_name}.{item}"
 
-    # 1. Instant Jedi Static Analysis
     try:
         import jedi
         script = jedi.Script(code)
@@ -104,7 +102,6 @@ def _get_worker_completions(code, line, col):
                 completions.append({"text": c.name, "type": c.type, "info": info})
     except Exception: pass
 
-    # 2. Sub-millisecond Attribute & Kernel Namespace Inspection
     try:
         lines = code.splitlines()
         if 0 <= line - 1 < len(lines):
@@ -224,8 +221,23 @@ while True:
 """
 
 
+def _force_kill_process(proc):
+    """Forcefully kills process tree instantly."""
+    if proc and proc.poll() is None:
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+            else:
+                proc.kill()
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+
 class KernelManager:
-    """Persistent Python Kernel Manager that retains state across all cell executions."""
+    """Persistent Python Kernel Manager with instant non-blocking process force-kill."""
     def __init__(self):
         self.exec_count = 0
         self.proc = None
@@ -233,161 +245,168 @@ class KernelManager:
         self._ensure_kernel_proc()
 
     def _ensure_kernel_proc(self):
-        if self.proc is None or self.proc.poll() is not None:
-            env = os.environ.copy()
-            env["PYTHONUNBUFFERED"] = "1"
+        with self.lock:
+            if self.proc is None or self.proc.poll() is not None:
+                env = os.environ.copy()
+                env["PYTHONUNBUFFERED"] = "1"
 
-            self.proc = subprocess.Popen(
-                [VENV_PYTHON, "-u", "-c", KERNEL_WORKER_SCRIPT],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-                env=env
-            )
-            while True:
-                line = self.proc.stdout.readline()
-                if "---JUPY_KERNEL_READY---" in line or not line:
-                    break
+                self.proc = subprocess.Popen(
+                    [VENV_PYTHON, "-u", "-c", KERNEL_WORKER_SCRIPT],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                    env=env
+                )
+                while True:
+                    line = self.proc.stdout.readline()
+                    if "---JUPY_KERNEL_READY---" in line or not line:
+                        break
 
     def get_completions(self, code, line, col):
-        """Sends completion request into worker kernel and returns matching completions."""
-        with self.lock:
-            self._ensure_kernel_proc()
-            if self.proc is None or self.proc.poll() is not None:
-                return []
-
-            req = json.dumps({"action": "complete", "code": code, "line": line, "column": col}) + "\n"
-            try:
-                self.proc.stdin.write(req)
-                self.proc.stdin.flush()
-            except Exception:
-                return []
-
-            while self.proc and self.proc.poll() is None:
-                line_str = self.proc.stdout.readline()
-                if not line_str:
-                    break
-
-                if line_str.startswith("---JUPY_COMPS:"):
-                    json_str = line_str.replace("---JUPY_COMPS:", "").strip()
-                    if json_str.endswith("---"):
-                        json_str = json_str[:-3]
-                    try:
-                        return json.loads(json_str)
-                    except Exception:
-                        return []
-                elif "---JUPY_CELL_COMPLETE---" in line_str:
-                    break
-
+        """Sends completion request into worker kernel."""
+        proc = self.proc
+        if proc is None or proc.poll() is not None:
             return []
 
-    def restart(self):
-        with self.lock:
-            if self.proc and self.proc.poll() is None:
-                try: self.proc.terminate()
-                except Exception: pass
-            self.proc = None
-            self.exec_count = 0
-            self._ensure_kernel_proc()
+        req = json.dumps({"action": "complete", "code": code, "line": line, "column": col}) + "\n"
+        try:
+            proc.stdin.write(req)
+            proc.stdin.flush()
+        except Exception:
+            return []
+
+        while proc and proc.poll() is None:
+            line_str = proc.stdout.readline()
+            if not line_str:
+                break
+
+            if line_str.startswith("---JUPY_COMPS:"):
+                json_str = line_str.replace("---JUPY_COMPS:", "").strip()
+                if json_str.endswith("---"):
+                    json_str = json_str[:-3]
+                try:
+                    return json.loads(json_str)
+                except Exception:
+                    return []
+            elif "---JUPY_CELL_COMPLETE---" in line_str:
+                break
+
+        return []
+
+    def force_interrupt(self):
+        """Forcefully kills running process instantly without waiting for thread locks."""
+        proc = self.proc
+        if proc and proc.poll() is None:
+            _force_kill_process(proc)
+            return True
+        return False
 
     def interrupt(self):
-        with self.lock:
-            if self.proc and self.proc.poll() is None:
-                try: self.proc.terminate()
-                except Exception: pass
-            self.proc = None
-            self._ensure_kernel_proc()
-        return True
+        return self.force_interrupt()
+
+    def restart(self):
+        """Restarts kernel process, wiping namespace state."""
+        proc = self.proc
+        if proc:
+            _force_kill_process(proc)
+        self.proc = None
+        self.exec_count = 0
+        self._ensure_kernel_proc()
 
     def handle_stdin_reply(self, value):
-        if self.proc and self.proc.poll() is None and self.proc.stdin:
+        proc = self.proc
+        if proc and proc.poll() is None and proc.stdin:
             try:
-                self.proc.stdin.write(f"{value}\n")
-                self.proc.stdin.flush()
+                proc.stdin.write(f"{value}\n")
+                proc.stdin.flush()
             except Exception:
                 pass
 
     def execute(self, code, ws_send_fn):
-        with self.lock:
-            self.exec_count += 1
-            self._ensure_kernel_proc()
+        self.exec_count += 1
+        self._ensure_kernel_proc()
+        current_proc = self.proc
 
-            lines = code.splitlines()
-            pip_cmds = []
-            py_lines = []
+        lines = code.splitlines()
+        pip_cmds = []
+        py_lines = []
 
-            for line in lines:
-                stripped = line.strip()
-                if re.match(r'^[!%]?\s*pip\s+install\s+', stripped):
-                    clean_cmd = re.sub(r'^[!%]?\s*pip\s+install\s+', '', stripped)
-                    pip_cmds.append(clean_cmd)
-                else:
-                    py_lines.append(line)
+        for line in lines:
+            stripped = line.strip()
+            if re.match(r'^[!%]?\s*pip\s+install\s+', stripped):
+                clean_cmd = re.sub(r'^[!%]?\s*pip\s+install\s+', '', stripped)
+                pip_cmds.append(clean_cmd)
+            else:
+                py_lines.append(line)
 
-            for cmd in pip_cmds:
-                ws_send_fn({"type": "stdout", "text": f"Installing {cmd} in .jupy_env...\n"})
-                p = subprocess.run([VENV_PYTHON, "-m", "pip", "install"] + cmd.split(), capture_output=True, text=True)
-                if p.stdout: ws_send_fn({"type": "stdout", "text": p.stdout})
-                if p.stderr: ws_send_fn({"type": "stderr", "text": p.stderr})
+        for cmd in pip_cmds:
+            ws_send_fn({"type": "stdout", "text": f"Installing {cmd} in .jupy_env...\n"})
+            p = subprocess.run([VENV_PYTHON, "-m", "pip", "install"] + cmd.split(), capture_output=True, text=True)
+            if p.stdout: ws_send_fn({"type": "stdout", "text": p.stdout})
+            if p.stderr: ws_send_fn({"type": "stderr", "text": p.stderr})
 
-            clean_code = "\n".join(py_lines)
-            if not clean_code.strip():
-                ws_send_fn({"type": "complete", "exec_count": self.exec_count})
-                return
-
-            req = json.dumps({"action": "execute", "code": clean_code}) + "\n"
-            try:
-                self.proc.stdin.write(req)
-                self.proc.stdin.flush()
-            except Exception as e:
-                ws_send_fn({"type": "stderr", "text": f"Kernel communication error: {str(e)}\n"})
-                ws_send_fn({"type": "complete", "exec_count": self.exec_count})
-                return
-
-            stderr_collecting = False
-            plots_collecting = False
-            plot_lines = []
-
-            while self.proc and self.proc.poll() is None:
-                line = self.proc.stdout.readline()
-                if not line:
-                    break
-
-                if line.startswith("---JUPY_STDIN_REQ:"):
-                    prompt = line.replace("---JUPY_STDIN_REQ:", "").replace("---", "").strip()
-                    ws_send_fn({"type": "stdin_request", "prompt": prompt})
-                    continue
-
-                if "---JUPY_CELL_COMPLETE---" in line:
-                    break
-
-                if "---JUPY_STDERR_START---" in line:
-                    stderr_collecting = True
-                    continue
-                if "---JUPY_STDERR_END---" in line:
-                    stderr_collecting = False
-                    continue
-
-                if "---JUPY_PLOTS_START---" in line:
-                    plots_collecting = True
-                    continue
-                if "---JUPY_PLOTS_END---" in line:
-                    plots_collecting = False
-                    for p in plot_lines:
-                        ws_send_fn({"type": "plot", "html": p})
-                    plot_lines = []
-                    continue
-
-                if stderr_collecting:
-                    ws_send_fn({"type": "stderr", "text": line})
-                elif plots_collecting:
-                    plot_lines.append(line.strip())
-                else:
-                    ws_send_fn({"type": "stdout", "text": line})
-
+        clean_code = "\n".join(py_lines)
+        if not clean_code.strip():
             ws_send_fn({"type": "complete", "exec_count": self.exec_count})
+            return
+
+        req = json.dumps({"action": "execute", "code": clean_code}) + "\n"
+        try:
+            current_proc.stdin.write(req)
+            current_proc.stdin.flush()
+        except Exception as e:
+            ws_send_fn({"type": "stderr", "text": f"Kernel communication error: {str(e)}\n"})
+            ws_send_fn({"type": "complete", "exec_count": self.exec_count})
+            return
+
+        stderr_collecting = False
+        plots_collecting = False
+        plot_lines = []
+
+        while current_proc:
+            line = current_proc.stdout.readline()
+
+            # Detect if process was force-killed by user interrupt
+            if not line:
+                if current_proc.poll() is not None:
+                    ws_send_fn({"type": "stderr", "text": "\n⏹ Execution force stopped by user.\n"})
+                break
+
+            if line.startswith("---JUPY_STDIN_REQ:"):
+                prompt = line.replace("---JUPY_STDIN_REQ:", "").replace("---", "").strip()
+                ws_send_fn({"type": "stdin_request", "prompt": prompt})
+                continue
+
+            if "---JUPY_CELL_COMPLETE---" in line:
+                break
+
+            if "---JUPY_STDERR_START---" in line:
+                stderr_collecting = True
+                continue
+            if "---JUPY_STDERR_END---" in line:
+                stderr_collecting = False
+                continue
+
+            if "---JUPY_PLOTS_START---" in line:
+                plots_collecting = True
+                continue
+            if "---JUPY_PLOTS_END---" in line:
+                plots_collecting = False
+                for p in plot_lines:
+                    ws_send_fn({"type": "plot", "html": p})
+                plot_lines = []
+                continue
+
+            if stderr_collecting:
+                ws_send_fn({"type": "stderr", "text": line})
+            elif plots_collecting:
+                plot_lines.append(line.strip())
+            else:
+                ws_send_fn({"type": "stdout", "text": line})
+
+        ws_send_fn({"type": "complete", "exec_count": self.exec_count})
 
 
 kernel = KernelManager()
