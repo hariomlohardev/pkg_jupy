@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Untitled.ipynb — PyBrowser</title>
+<title>Untitled.ipynb — Jupy</title>
 
-<!-- Fonts: Darker Grotesque & JetBrains Mono -->
+<!-- Fonts -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Darker+Grotesque:wght@500;700;800;900&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
@@ -17,9 +17,12 @@
 </head>
 <body>
 
-<!-- Compact Brutalist Topbar Header -->
+<!-- Brutalist Topbar Header -->
 <header class="topbar">
-  <a href="../index.html" class="back-btn" title="Back to home" aria-label="Back">←</a>
+  <div class="brand-block">
+    <img src="logo.png" alt="Jupy" class="logo-img" onerror="this.style.display='none'" />
+    <span class="brand-name">JUPY</span>
+  </div>
 
   <div class="title-block">
     <div class="filename-wrapper">
@@ -27,41 +30,57 @@
     </div>
     <span class="status" id="status">
       <span class="status-indicator"></span>
-      INIT RUNTIME…
+      ENV: .JUPY_ENV READY
     </span>
   </div>
 
   <div class="spacer"></div>
 
   <div class="topbar-actions">
+    <button class="btn btn-warning" id="btn-terminal-toggle">📟 TERMINAL</button>
     <button class="btn btn-secondary" id="btn-theme-toggle" title="Toggle Light/Dark Theme">☀ DARK</button>
     <input type="file" id="file-input" accept=".ipynb" hidden />
     <button class="btn btn-secondary" id="btn-open">OPEN</button>
     <button class="btn btn-secondary" id="btn-save">SAVE</button>
-    <button class="btn btn-secondary" id="btn-restart" title="Clear variables and restart kernel">RESTART</button>
-    <button class="btn btn-primary" id="btn-run-all" disabled>RUN ALL</button>
+    <button class="btn btn-secondary" id="btn-restart">RESTART</button>
+    <button class="btn btn-primary" id="btn-run-all">RUN ALL</button>
   </div>
 </header>
 
-<main class="notebook" id="notebook">
-  <!-- Cells rendered dynamically -->
-</main>
+<!-- Main Workspace Split Container -->
+<div class="app-workspace" id="app-workspace">
+  <!-- Left Side: Notebook Cells -->
+  <div class="notebook-panel">
+    <main class="notebook" id="notebook"></main>
+    <div class="add-cell-bottom">
+      <button class="add-cell-btn" id="btn-add-bottom">+ CODE CELL</button>
+    </div>
+  </div>
 
-<div class="add-cell-bottom">
-  <button class="add-cell-btn" id="btn-add-bottom">+ CODE CELL</button>
+  <!-- Right Side Split Interactive Native Terminal Panel -->
+  <aside class="terminal-panel" id="terminal-panel" hidden>
+    <div class="terminal-header">
+      <span class="terminal-title">📟 WINDOWS POWERSHELL / SHELL (.JUPY_ENV)</span>
+      <button class="action-btn action-danger" id="btn-terminal-close" title="Close Terminal">✕</button>
+    </div>
+    <div class="terminal-screen" id="terminal-screen" tabindex="0">
+      <pre class="terminal-output" id="terminal-output"></pre>
+      <span class="terminal-cursor">█</span>
+    </div>
+  </aside>
 </div>
 
-<!-- Compact Brutalist Hint Bar -->
+<!-- Compact Hint Bar Footer -->
 <footer class="hint-bar-wrapper">
   <div class="hint-bar">
     <span class="hint-item"><kbd>SHIFT</kbd>+<kbd>↵</kbd> RUN</span>
     <span class="hint-item"><kbd>CTRL/⌘</kbd>+<kbd>↵</kbd> RUN IN PLACE</span>
-    <span class="hint-item"><kbd>!PIP INSTALL LIB</kbd> PKGS</span>
+    <span class="hint-item"><kbd>📟 TERMINAL</kbd> SIDE SHELL</span>
     <span class="hint-item"><kbd>ESC</kbd> then <kbd>A</kbd>/<kbd>B</kbd>/<kbd>DD</kbd> EDIT</span>
   </div>
 </footer>
 
-<!-- Cell Template -->
+<!-- Cell Templates -->
 <template id="cell-template">
   <div class="cell" tabindex="-1">
     <div class="cell-gutter">
@@ -87,10 +106,8 @@
   </div>
 </template>
 
-<!-- Scripts -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
-<script src="js/pyodide-runtime.js"></script>
 <script src="js/notebook.js"></script>
 </body>
 </html>

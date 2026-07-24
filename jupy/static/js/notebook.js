@@ -5,22 +5,30 @@
   const fileInput = document.getElementById('file-input');
   const runAllBtn = document.getElementById('btn-run-all');
   const themeToggleBtn = document.getElementById('btn-theme-toggle');
+
+  // Terminal Panel Elements
+  const terminalPanel = document.getElementById('terminal-panel');
+  const terminalToggleBtn = document.getElementById('btn-terminal-toggle');
+  const terminalCloseBtn = document.getElementById('btn-terminal-close');
+  const terminalScreen = document.getElementById('terminal-screen');
+  const terminalOutput = document.getElementById('terminal-output');
+
+  let runSocket = null;
+  let termSocket = null;
+
   const cellTpl = document.getElementById('cell-template');
   const insertBarTpl = document.getElementById('insert-bar-template');
 
   const cells = [];
   let idCounter = 0;
-  let execCounter = 0;
   let selectedId = null;
   let editingId = null;
-  let pyodide = null;
+  let runningCellId = null;
   let pendingD = false;
 
-  // ------------------------------------------------------------------
-  // Dark / Light Theme Toggle Management
-  // ------------------------------------------------------------------
+  // Theme Management
   function initTheme() {
-    const savedTheme = localStorage.getItem('pybrowser-theme');
+    const savedTheme = localStorage.getItem('jupy-theme');
     if (savedTheme) {
       document.documentElement.setAttribute('data-theme', savedTheme);
       themeToggleBtn.textContent = savedTheme === 'dark' ? '☀ LIGHT' : '🌙 DARK';
@@ -37,14 +45,106 @@
 
     const nextTheme = isCurrentlyDark ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', nextTheme);
-    localStorage.setItem('pybrowser-theme', nextTheme);
+    localStorage.setItem('jupy-theme', nextTheme);
     themeToggleBtn.textContent = nextTheme === 'dark' ? '☀ LIGHT' : '🌙 DARK';
   });
 
   initTheme();
 
   // ------------------------------------------------------------------
-  // Compact Cell Creation
+  // WebSocket Setup: Cell Execution
+  // ------------------------------------------------------------------
+  function initRunSocket() {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    runSocket = new WebSocket(`${protocol}//${location.host}/ws/run`);
+
+    runSocket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (!runningCellId) return;
+
+      const cell = getCell(runningCellId);
+      if (!cell) return;
+
+      if (data.type === 'stdout') appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stdout');
+      if (data.type === 'stderr') appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stderr');
+      if (data.type === 'plot') appendCellPlot(cell, data.html);
+      if (data.type === 'complete') {
+        cell.dom.root.classList.remove('running');
+        cell.dom.runBtn.textContent = '▶';
+        cell.dom.runBtn.title = 'Run cell (Shift+Enter)';
+        cell.execCount = data.exec_count;
+        cell.dom.execCountEl.textContent = `[${cell.execCount}]`;
+        runningCellId = null;
+      }
+    };
+
+    runSocket.onclose = () => setTimeout(initRunSocket, 1000);
+  }
+
+  initRunSocket();
+
+  // ------------------------------------------------------------------
+  // WebSocket Setup: Native Terminal Stream
+  // ------------------------------------------------------------------
+  function initTermSocket() {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    termSocket = new WebSocket(`${protocol}//${location.host}/ws/terminal`);
+
+    termSocket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'output') {
+        terminalOutput.textContent += data.data;
+        terminalScreen.scrollTop = terminalScreen.scrollHeight;
+      }
+    };
+
+    termSocket.onclose = () => {
+      if (!terminalPanel.hidden) setTimeout(initTermSocket, 1000);
+    };
+  }
+
+  function toggleTerminal() {
+    terminalPanel.hidden = !terminalPanel.hidden;
+
+    if (!terminalPanel.hidden) {
+      if (!termSocket || termSocket.readyState !== WebSocket.OPEN) {
+        initTermSocket();
+      }
+      terminalScreen.focus();
+    }
+
+    setTimeout(() => {
+      cells.forEach((c) => c.cm.refresh());
+    }, 50);
+  }
+
+  terminalToggleBtn.addEventListener('click', toggleTerminal);
+  terminalCloseBtn.addEventListener('click', toggleTerminal);
+
+  terminalScreen.addEventListener('click', () => terminalScreen.focus());
+
+  terminalScreen.addEventListener('keydown', (e) => {
+    if (!termSocket || termSocket.readyState !== WebSocket.OPEN) return;
+
+    e.preventDefault();
+    let char = '';
+
+    if (e.key === 'Enter') char = '\r';
+    else if (e.key === 'Backspace') char = '\b';
+    else if (e.key === 'Tab') char = '\t';
+    else if (e.key === 'ArrowUp') char = '\x1b[A';
+    else if (e.key === 'ArrowDown') char = '\x1b[B';
+    else if (e.key === 'ArrowRight') char = '\x1b[C';
+    else if (e.key === 'ArrowLeft') char = '\x1b[D';
+    else if (e.key.length === 1) char = e.key;
+
+    if (char) {
+      termSocket.send(JSON.stringify({ type: 'input', data: char }));
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // Cell Management
   // ------------------------------------------------------------------
   function makeCell(source = '') {
     const id = 'cell-' + (++idCounter);
@@ -93,7 +193,11 @@
 
     runBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      runCell(cell.id, { advance: false });
+      if (runningCellId === cell.id) {
+        interruptCell();
+      } else {
+        runCell(cell.id, { advance: false });
+      }
     });
 
     toolbar.querySelector('[data-action="move-up"]').addEventListener('click', (e) => {
@@ -153,7 +257,6 @@
     }
     const idx = indexOf(id);
     const cell = cells[idx];
-    
     cell.dom.root.remove();
     cell.dom.insertBar.remove();
     cells.splice(idx, 1);
@@ -228,24 +331,20 @@
     cell.outputs.push({ kind: 'plot', text: htmlString });
   }
 
-  async function runCell(id, { advance = false, insertBelow = false } = {}) {
+  // Real-Time Execution over WebSockets
+  function runCell(id, { advance = false, insertBelow = false } = {}) {
     const cell = getCell(id);
-    if (!cell || !pyodide) return;
+    if (!cell || !runSocket || runSocket.readyState !== WebSocket.OPEN) return;
     const idx = indexOf(id);
 
+    runningCellId = id;
     cell.dom.root.classList.add('running');
+    cell.dom.runBtn.textContent = '⏹';
+    cell.dom.runBtn.title = 'Interrupt / Stop execution';
     clearCellOutput(cell);
+
     const source = cell.cm.getValue();
-
-    await PyRuntime.runCell(pyodide, source, {
-      onStdout: (msg) => appendCellOutput(cell, msg, 'stdout'),
-      onStderr: (msg) => appendCellOutput(cell, msg, 'stderr'),
-      onPlot: (html) => appendCellPlot(cell, html),
-    });
-
-    cell.dom.root.classList.remove('running');
-    cell.execCount = ++execCounter;
-    cell.dom.execCountEl.textContent = `[${cell.execCount}]`;
+    runSocket.send(JSON.stringify({ action: 'run', code: source }));
 
     if (insertBelow) {
       insertCellAt(idx + 1, '', { focus: true });
@@ -261,9 +360,18 @@
     }
   }
 
+  function interruptCell() {
+    if (runSocket && runSocket.readyState === WebSocket.OPEN) {
+      runSocket.send(JSON.stringify({ action: 'interrupt' }));
+    }
+  }
+
   async function runAll() {
     for (const cell of [...cells]) {
-      await runCell(cell.id, { advance: false });
+      runCell(cell.id, { advance: false });
+      while (runningCellId) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
     }
   }
 
@@ -286,8 +394,8 @@
         source: toSourceLines(cell.cm.getValue()),
       })),
       metadata: {
-        kernelspec: { display_name: 'Python 3 (Pyodide)', language: 'python', name: 'python3' },
-        language_info: { name: 'python', pygments_lexer: 'ipython3', version: '3.11' },
+        kernelspec: { display_name: 'Python 3 (.jupy_env)', language: 'python', name: 'python3' },
+        language_info: { name: 'python', version: '3.11' },
       },
       nbformat: 4,
       nbformat_minor: 5,
@@ -328,7 +436,6 @@
 
     reorderDom();
     cells.forEach((c) => c.cm.refresh());
-    execCounter = Math.max(0, ...cells.map((c) => c.execCount || 0));
     selectCell(cells[0].id);
   }
 
@@ -372,21 +479,18 @@
   document.getElementById('btn-save').addEventListener('click', downloadNotebook);
 
   document.getElementById('btn-restart').addEventListener('click', async () => {
-    if (!pyodide) return;
-    await PyRuntime.restartKernel(pyodide);
-    execCounter = 0;
+    await fetch('/api/restart', { method: 'POST' });
     cells.forEach((c) => {
       c.execCount = null;
       c.dom.execCountEl.textContent = '[\u00A0]';
       clearCellOutput(c);
     });
-    setStatus('Runtime restarted');
   });
 
   runAllBtn.addEventListener('click', runAll);
 
   document.addEventListener('keydown', (e) => {
-    if (editingId) return;
+    if (editingId || document.activeElement === terminalScreen) return;
     if (!selectedId) return;
 
     if (e.key === 'Enter' && e.shiftKey) {
@@ -435,40 +539,12 @@
     }
   });
 
-  function setStatus(text) {
-    const isReady = text === 'Ready';
-    statusEl.innerHTML = `
-      <span class="status-indicator ${isReady ? '' : 'pulsing'}"></span>
-      ${text.toUpperCase()}
-    `;
-  }
-
-  // Initial Demo Cell
+  // Initial Cell
   insertCellAt(0, [
-    '# BRUTALISM COMPACT DEMO',
-    '!pip install matplotlib numpy',
-    'import matplotlib.pyplot as plt',
-    'import numpy as np',
-    '',
-    'x = np.linspace(0, 2 * np.pi, 100)',
-    'y = np.sin(x)',
-    '',
-    'plt.figure(figsize=(5, 2.5))',
-    'plt.plot(x, y, color="#DD614C", linewidth=2.5, label="sin(x)")',
-    'plt.title("COMPACT WAVE", fontsize=10, fontweight="bold")',
-    'plt.grid(True, color="#111827", linestyle="--", alpha=0.3)',
-    'plt.legend()',
+    '# JUPY - WEBSOCKETS & NATIVE POWERSHELL TERMINAL',
+    'import sys',
+    'print("Virtualenv executable:", sys.executable)',
   ].join('\n'));
   selectCell(cells[0].id);
 
-  PyRuntime.getPyodide(setStatus)
-    .then((p) => {
-      pyodide = p;
-      runAllBtn.disabled = false;
-      setStatus('Ready');
-    })
-    .catch((err) => {
-      setStatus('Failed to load Python runtime');
-      console.error(err);
-    });
 })();

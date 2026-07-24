@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+jupy/__init__.py
+jupy/__main__.py
+jupy/cli.py
+jupy/server.py
+jupy.egg-info/PKG-INFO
+jupy.egg-info/SOURCES.txt
+jupy.egg-info/dependency_links.txt
+jupy.egg-info/top_level.txt

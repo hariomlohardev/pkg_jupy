@@ -1,0 +1,28 @@
+import argparse
+import sys
+import webbrowser
+from jupy.server import start_server
+
+def main():
+    parser = argparse.ArgumentParser(description="Jupy - Brutalist Local Python Notebook")
+    parser.add_argument("--port", type=int, default=8888, help="Port to run server on (default: 8888)")
+    parser.add_argument("--no-browser", action="store_true", help="Do not automatically open browser")
+    args = parser.parse_args()
+
+    url = f"http://localhost:{args.port}"
+    print(f"\n  ┌───────────────────────────────────────────────────┐")
+    print(f"  │  JUPY LOCAL NOTEBOOK SERVER                       │")
+    print(f"  │  URL: {url:<43} │")
+    print(f"  └───────────────────────────────────────────────────┘\n")
+
+    if not args.no_browser:
+        webbrowser.open(url)
+
+    try:
+        start_server(port=args.port)
+    except KeyboardInterrupt:
+        print("\n[Jupy] Server stopped.")
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()
