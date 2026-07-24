@@ -9,7 +9,9 @@ jupy.egg-info/SOURCES.txt
 jupy.egg-info/dependency_links.txt
 jupy.egg-info/top_level.txt
 jupy/core/__init__.py
+jupy/core/autocomplete.py
 jupy/core/kernel.py
+jupy/core/metrics.py
 jupy/core/terminal.py
 jupy/core/venv.py
 jupy/server/__init__.py

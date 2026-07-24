@@ -1,12 +1,21 @@
+let completionDebounceTimer = null;
+let activeAbortController = null;
+
 export function registerAutocomplete(cm) {
-  // Bind Ctrl+Space and Cmd+Space manual shortcuts
+  // Bind Ctrl+Space and Cmd+Space manual shortcuts (triggers instantly, bypassing debounce)
   cm.addKeyMap({
-    'Ctrl-Space': (editor) => triggerHint(editor),
-    'Cmd-Space': (editor) => triggerHint(editor),
+    'Ctrl-Space': (editor) => {
+      if (completionDebounceTimer) clearTimeout(completionDebounceTimer);
+      triggerHint(editor);
+    },
+    'Cmd-Space': (editor) => {
+      if (completionDebounceTimer) clearTimeout(completionDebounceTimer);
+      triggerHint(editor);
+    },
   });
 
   cm.on('keyup', (editor, event) => {
-    // Exclude navigation, control keys, enter, backspace
+    // Exclude navigation, control keys, enter, backspace, and escape
     if (
       event.ctrlKey || event.metaKey || event.altKey ||
       event.key === 'Enter' || event.key === 'Escape' ||
@@ -15,20 +24,42 @@ export function registerAutocomplete(cm) {
       event.key === 'Shift' || event.key === 'Tab' ||
       event.key === 'Backspace' || event.key === ' '
     ) {
+      if (completionDebounceTimer) {
+        clearTimeout(completionDebounceTimer);
+        completionDebounceTimer = null;
+      }
       return;
     }
 
     const cursor = editor.getCursor();
     const token = editor.getTokenAt(cursor);
 
-    if (token.type === 'comment' || token.type === 'string') return;
+    if (token.type === 'comment' || token.type === 'string') {
+      if (completionDebounceTimer) {
+        clearTimeout(completionDebounceTimer);
+        completionDebounceTimer = null;
+      }
+      return;
+    }
 
     const isDot = event.key === '.';
     const isWord = token.string.trim().length >= 1 && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(token.string);
 
     if (isDot || isWord) {
-      // Instant zero-delay execution
-      triggerHint(editor);
+      // Clear any pending timeout while active typing is in progress
+      if (completionDebounceTimer) {
+        clearTimeout(completionDebounceTimer);
+      }
+
+      // Trigger completion instantly after a brief 50ms pause
+      completionDebounceTimer = setTimeout(() => {
+        triggerHint(editor);
+      }, 50);
+    } else {
+      if (completionDebounceTimer) {
+        clearTimeout(completionDebounceTimer);
+        completionDebounceTimer = null;
+      }
     }
   });
 }
@@ -45,9 +76,16 @@ function fetchJupyCompletions(editor, callback) {
   const cursor = editor.getCursor();
   const code = editor.getValue();
 
+  // Abort any slow, flying network requests before making a new one
+  if (activeAbortController) {
+    activeAbortController.abort();
+  }
+  activeAbortController = new AbortController();
+
   fetch('/api/complete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal: activeAbortController.signal,
     body: JSON.stringify({
       code: code,
       line: cursor.line + 1,
@@ -96,5 +134,10 @@ function fetchJupyCompletions(editor, callback) {
       to: CodeMirror.Pos(cursor.line, end)
     });
   })
-  .catch(() => callback(null));
+  .catch((err) => {
+    // Suppress unhandled errors raised by aborting previous fetch requests
+    if (err.name !== 'AbortError') {
+      callback(null);
+    }
+  });
 }
