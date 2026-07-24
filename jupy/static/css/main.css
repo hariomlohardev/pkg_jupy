@@ -1,0 +1,18 @@
+@import "base/variables.css";
+@import "components/topbar.css";
+@import "components/cells.css";
+@import "components/terminal.css";
+@import "components/editor.css";
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background-color: var(--color-bg-well);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.25;
+  display: flex;
+  flex-direction: column;
+}

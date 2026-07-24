@@ -4,7 +4,6 @@ import hashlib
 import io
 import json
 import os
-import queue
 import re
 import socketserver
 import struct
@@ -85,20 +84,20 @@ def make_ws_frame(message):
         header = struct.pack(">BBQ", 0x81, 127, length)
     return header + data
 
-
 class KernelManager:
-    """Handles cell execution with real-time process interrupt support."""
+    """Handles cell execution with safe real-time process interrupt support."""
     def __init__(self):
         self.current_proc = None
         self.exec_count = 0
 
     def interrupt(self):
-        if self.current_proc and self.current_proc.poll() is None:
+        proc = self.current_proc
+        if proc and proc.poll() is None:
             try:
-                self.current_proc.terminate()
+                proc.terminate()
                 time.sleep(0.1)
-                if self.current_proc.poll() is None:
-                    self.current_proc.kill()
+                if proc.poll() is None:
+                    proc.kill()
             except Exception:
                 pass
             return True
@@ -191,12 +190,12 @@ print(json.dumps({{
     "plots": plots
 }}))
 """
+        proc = subprocess.Popen([VENV_PYTHON, "-c", runner_script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.current_proc = proc
+        stdout, stderr = proc.communicate()
 
-        self.current_proc = subprocess.Popen([VENV_PYTHON, "-c", runner_script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        stdout, stderr = self.current_proc.communicate()
-
-        if self.current_proc.returncode != 0 and not stdout:
-            ws_send_fn({"type": "stderr", "text": "\nKeyboardInterrupt: Execution interrupted by user.\n"})
+        if proc.returncode != 0 and not stdout:
+            ws_send_fn({"type": "stderr", "text": "\n⏹ Execution interrupted by user.\n"})
         else:
             if "---JUPY_JSON_START---" in stdout:
                 parts = stdout.split("---JUPY_JSON_START---")
@@ -216,16 +215,13 @@ print(json.dumps({{
         self.current_proc = None
         ws_send_fn({"type": "complete", "exec_count": self.exec_count})
 
-
 kernel = KernelManager()
-
 
 class JupyHTTPHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=STATIC_DIR, **kwargs)
 
     def do_GET(self):
-        # Handle WebSocket Handshake
         if self.headers.get("Upgrade", "").lower() == "websocket":
             ws_key = self.headers.get("Sec-WebSocket-Key")
             accept_key = make_ws_accept(ws_key)
@@ -248,7 +244,6 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
             super().do_GET()
 
     def handle_run_ws(self):
-        """WebSocket handler for real-time cell execution and cancellation."""
         def ws_send(data_dict):
             try:
                 frame = make_ws_frame(json.dumps(data_dict))
@@ -273,19 +268,18 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 pass
 
     def handle_terminal_ws(self):
-        """WebSocket handler for native interactive shell (PowerShell / zsh / bash)."""
+        """Native Shell Handler."""
         env = os.environ.copy()
         env["VIRTUAL_ENV"] = VENV_DIR
         env["PATH"] = VENV_BIN + os.path.pathsep + env.get("PATH", "")
 
-        shell = ["powershell.exe", "-NoExit"] if sys.platform == "win32" else [env.get("SHELL", "/bin/bash"), "-i"]
+        shell = ["cmd.exe", "/K"] if sys.platform == "win32" else [env.get("SHELL", "/bin/bash"), "-i"]
 
         proc = subprocess.Popen(
             shell,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            bufsize=0,
             env=env,
             cwd=os.getcwd()
         )
@@ -293,9 +287,9 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
         def stream_stdout():
             while proc.poll() is None:
                 try:
-                    chunk = proc.stdout.read(1024)
+                    chunk = proc.stdout.read(1)
                     if chunk:
-                        text = chunk.decode("utf-8", errors="ignore")
+                        text = chunk.decode("utf-8", errors="replace")
                         frame = make_ws_frame(json.dumps({"type": "output", "data": text}))
                         self.wfile.write(frame)
                         self.wfile.flush()
@@ -328,7 +322,6 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-
 
 def start_server(port=8888):
     socketserver.TCPServer.allow_reuse_address = True

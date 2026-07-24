@@ -1,0 +1,88 @@
+/* ==========================================================================
+   Jupy Brutalism Design System - Native Black & White Split Terminal
+   ========================================================================== */
+
+/* Keep hidden when [hidden] attribute is present */
+.terminal-panel[hidden],
+[hidden] {
+  display: none !important;
+}
+
+.terminal-panel {
+  width: 480px;
+  min-width: 340px;
+  max-width: 55vw;
+  background: #09090B;
+  border-left: var(--border-thick);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.terminal-header {
+  padding: 6px 12px;
+  background: var(--color-primary);
+  border-bottom: var(--border-thick);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.terminal-title {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #FFFFFF;
+  letter-spacing: 0.04em;
+}
+
+.terminal-screen {
+  flex: 1;
+  padding: 12px;
+  overflow-y: auto;
+  background: #09090B;
+  cursor: text;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-mono);
+}
+
+/* Stark White Output Text (No Green) */
+.terminal-output {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: #F9FAFB;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.terminal-input-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.terminal-prompt {
+  color: var(--color-secondary); /* Ochre Gold #DAA144 */
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.terminal-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: #F9FAFB; /* White Typing Text */
+  outline: none;
+  caret-color: #F9FAFB;
+  padding: 0;
+  margin: 0;
+}

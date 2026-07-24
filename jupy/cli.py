@@ -1,7 +1,14 @@
 import argparse
+import socketserver
 import sys
 import webbrowser
-from jupy.server import start_server
+from jupy.server.handlers import JupyHTTPHandler
+
+
+class ThreadingServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
 
 def main():
     parser = argparse.ArgumentParser(description="Jupy - Brutalist Local Python Notebook")
@@ -19,10 +26,12 @@ def main():
         webbrowser.open(url)
 
     try:
-        start_server(port=args.port)
+        with ThreadingServer(("", args.port), JupyHTTPHandler) as httpd:
+            httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n[Jupy] Server stopped.")
         sys.exit(0)
+
 
 if __name__ == "__main__":
     main()
