@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Untitled.ipynb — PyBrowser</title>
+
+<!-- Fonts: Darker Grotesque & JetBrains Mono -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Darker+Grotesque:wght@500;700;800;900&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+
+<!-- CodeMirror Core & Brutalism Theme -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
+<link rel="stylesheet" href="css/codemirror-brutalism.css" />
+<link rel="stylesheet" href="css/notebook.css" />
+</head>
+<body>
+
+<!-- Compact Brutalist Topbar Header -->
+<header class="topbar">
+  <a href="../index.html" class="back-btn" title="Back to home" aria-label="Back">←</a>
+
+  <div class="title-block">
+    <div class="filename-wrapper">
+      <input id="filename" class="filename-input" value="Untitled.ipynb" spellcheck="false" autocomplete="off" />
+    </div>
+    <span class="status" id="status">
+      <span class="status-indicator"></span>
+      INIT RUNTIME…
+    </span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="topbar-actions">
+    <button class="btn btn-secondary" id="btn-theme-toggle" title="Toggle Light/Dark Theme">☀ DARK</button>
+    <input type="file" id="file-input" accept=".ipynb" hidden />
+    <button class="btn btn-secondary" id="btn-open">OPEN</button>
+    <button class="btn btn-secondary" id="btn-save">SAVE</button>
+    <button class="btn btn-secondary" id="btn-restart" title="Clear variables and restart kernel">RESTART</button>
+    <button class="btn btn-primary" id="btn-run-all" disabled>RUN ALL</button>
+  </div>
+</header>
+
+<main class="notebook" id="notebook">
+  <!-- Cells rendered dynamically -->
+</main>
+
+<div class="add-cell-bottom">
+  <button class="add-cell-btn" id="btn-add-bottom">+ CODE CELL</button>
+</div>
+
+<!-- Compact Brutalist Hint Bar -->
+<footer class="hint-bar-wrapper">
+  <div class="hint-bar">
+    <span class="hint-item"><kbd>SHIFT</kbd>+<kbd>↵</kbd> RUN</span>
+    <span class="hint-item"><kbd>CTRL/⌘</kbd>+<kbd>↵</kbd> RUN IN PLACE</span>
+    <span class="hint-item"><kbd>!PIP INSTALL LIB</kbd> PKGS</span>
+    <span class="hint-item"><kbd>ESC</kbd> then <kbd>A</kbd>/<kbd>B</kbd>/<kbd>DD</kbd> EDIT</span>
+  </div>
+</footer>
+
+<!-- Cell Template -->
+<template id="cell-template">
+  <div class="cell" tabindex="-1">
+    <div class="cell-gutter">
+      <button class="run-btn" title="Run cell (Shift+Enter)">▶</button>
+      <div class="exec-count">[&nbsp;]</div>
+    </div>
+    <div class="cell-body">
+      <div class="cell-editor"></div>
+      <pre class="cell-output" hidden></pre>
+    </div>
+    <div class="cell-toolbar">
+      <button data-action="move-up" class="action-btn" title="Move cell up">↑</button>
+      <button data-action="move-down" class="action-btn" title="Move cell down">↓</button>
+      <button data-action="delete" class="action-btn action-danger" title="Delete cell">✕</button>
+    </div>
+  </div>
+</template>
+
+<template id="insert-bar-template">
+  <div class="insert-bar">
+    <div class="insert-line"></div>
+    <button class="add-cell-btn add-cell-btn-inline">+ CODE</button>
+  </div>
+</template>
+
+<!-- Scripts -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+<script src="js/pyodide-runtime.js"></script>
+<script src="js/notebook.js"></script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+/* ==========================================================================
+   Brutalism Design System - CodeMirror Theme
+   ========================================================================== */
+
+.CodeMirror {
+  font-family: "JetBrains Mono", monospace !important;
+  font-size: 0.82rem !important;
+  line-height: 1.4 !important;
+  height: auto !important;
+  background: var(--color-surface) !important;
+  color: var(--color-text) !important;
+  padding: 4px 6px !important;
+}
+
+/* Caret & Selection */
+.CodeMirror-cursor {
+  border-left: 2.5px solid var(--color-primary) !important;
+}
+
+.CodeMirror-selected {
+  background: var(--color-secondary) !important;
+  color: #111827 !important;
+}
+
+/* Base Syntax Tokens */
+.cm-s-brutalism .cm-keyword { color: var(--color-primary); font-weight: 800; }
+.cm-s-brutalism .cm-string { color: var(--color-warning); font-weight: 500; }
+.cm-s-brutalism .cm-number { color: var(--color-danger); font-weight: 700; }
+.cm-s-brutalism .cm-builtin { color: var(--color-text); font-weight: 800; text-decoration: underline; }
+.cm-s-brutalism .cm-variable { color: var(--color-text); font-weight: 500; }
+.cm-s-brutalism .cm-operator { color: var(--color-text); font-weight: 800; }
+.cm-s-brutalism .cm-comment { color: #6B7280; font-style: italic; }
+.cm-s-brutalism .cm-def { color: var(--color-secondary); font-weight: 800; }
+.cm-s-brutalism .cm-atom { color: var(--color-success); font-weight: 800; }
+
+/* Dark Mode Tokens */
+html[data-theme="dark"] .cm-s-brutalism .cm-comment { color: #9CA3AF; }
+html[data-theme="dark"] .cm-s-brutalism .cm-builtin { color: #F9FAFB; }
+html[data-theme="dark"] .cm-s-brutalism .cm-variable { color: #F9FAFB; }
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .cm-s-brutalism .cm-comment { color: #9CA3AF; }
+  html:not([data-theme="light"]) .cm-s-brutalism .cm-builtin { color: #F9FAFB; }
+  html:not([data-theme="light"]) .cm-s-brutalism .cm-variable { color: #F9FAFB; }
+}
