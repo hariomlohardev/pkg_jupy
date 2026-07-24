@@ -1,6 +1,7 @@
 import { initTheme } from './theme.js';
 import { createRunSocket } from './websocket.js';
 import { setupTerminal } from './terminal.js';
+import { registerAutocomplete } from './autocomplete.js';
 
 (() => {
   const container = document.getElementById('notebook');
@@ -89,6 +90,9 @@ import { setupTerminal } from './terminal.js';
       },
     });
     cell.cm = cm;
+
+    // Attach Autocomplete Listener
+    registerAutocomplete(cm);
 
     cm.on('focus', () => enterEditMode(cell.id));
     root.addEventListener('click', (e) => {
@@ -219,7 +223,6 @@ import { setupTerminal } from './terminal.js';
     });
   }
 
-  // Appends plot only if valid HTML image content exists
   function appendCellPlot(cell, htmlString) {
     if (!htmlString || !htmlString.trim()) return;
 
@@ -416,25 +419,17 @@ import { setupTerminal } from './terminal.js';
     else if (k === 'arrowdown') { e.preventDefault(); selectAdjacent(1); }
   });
 
-  // Demo Initial Cells
+  // Initial Autocomplete Demo Cell
   insertCellAt(0, [
-    '# CELL 1: Render a plot',
-    'import matplotlib.pyplot as plt',
+    '# JUPY - VS CODE AUTOCOMPLETE DEMO',
+    '# Try typing: np., plt., or math.',
     'import numpy as np',
+    'import matplotlib.pyplot as plt',
+    'import math',
     '',
     'x = np.linspace(0, 10, 100)',
-    'plt.figure(figsize=(6, 2.5))',
-    'plt.plot(x, np.sin(x), color="#DD614C", linewidth=2, label="sin(x)")',
-    'plt.title("Sine Wave")',
-    'plt.legend()',
+    'y = np.sin(x)',
+    'print("Type np. or math. to trigger IntelliSense!")',
   ].join('\n'));
-
-  insertCellAt(1, [
-    '# CELL 2: Execute simple code (No blank plot container will appear)',
-    'print("Executing simple code below a plot cell...")',
-    'for i in range(1, 4):',
-    '    print(f"Step {i} complete")',
-  ].join('\n'));
-
   selectCell(cells[0].id);
 })();

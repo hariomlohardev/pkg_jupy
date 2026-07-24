@@ -10,8 +10,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Darker+Grotesque:wght@500;700;800;900&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
 
-<!-- CodeMirror Core -->
+<!-- CodeMirror Core & Autocomplete Addons -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css" />
 
 <!-- Modular CSS Modules Entry Point -->
 <link rel="stylesheet" href="css/main.css" />
@@ -57,7 +58,7 @@
     </div>
   </div>
 
-  <!-- Right Side Split Terminal (80% Height & Yellow Prompt) -->
+  <!-- Right Side Split Terminal (Hidden by Default) -->
   <aside class="terminal-panel" id="terminal-panel" hidden>
     <div class="terminal-header">
       <span class="terminal-title">📟 TERMINAL (jupy_venv)</span>
@@ -113,6 +114,7 @@
 <!-- Scripts -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
 <script type="module" src="js/notebook.js"></script>
 </body>
 </html>
