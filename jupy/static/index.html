@@ -57,18 +57,19 @@
     </div>
   </div>
 
-  <!-- Right Side Split Terminal (Hidden by Default) -->
+  <!-- Right Side Split Terminal (80% Height & Yellow Prompt) -->
   <aside class="terminal-panel" id="terminal-panel" hidden>
     <div class="terminal-header">
       <span class="terminal-title">📟 TERMINAL (jupy_venv)</span>
       <button class="action-btn action-danger" id="btn-terminal-close" title="Close Terminal">✕</button>
     </div>
     <div class="terminal-screen" id="terminal-screen">
-      <div class="terminal-output" id="terminal-output"></div>
+      <pre class="terminal-output" id="terminal-output"></pre>
       <div class="terminal-input-line">
-        <span class="terminal-prompt" id="terminal-prompt-label">❯</span>
+        <span class="terminal-prompt" id="terminal-prompt-label">(jupy_venv) ❯</span>
         <input type="text" id="terminal-input" class="terminal-input" autocomplete="off" spellcheck="false" placeholder="type command..." />
       </div>
+      <div class="terminal-bottom-spacer"></div>
     </div>
   </aside>
 </div>
@@ -96,7 +97,7 @@
     </div>
     <div class="cell-toolbar">
       <button data-action="move-up" class="action-btn" title="Move cell up">↑</button>
-      <button data-action="move-down" class="action-btn" title="Move cell down">↓</button>
+      <button data-action="move-down" class="action-btn" title="Move down">↓</button>
       <button data-action="delete" class="action-btn action-danger" title="Delete cell">✕</button>
     </div>
   </div>

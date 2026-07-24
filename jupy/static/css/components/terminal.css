@@ -1,8 +1,7 @@
 /* ==========================================================================
-   Jupy Brutalism Design System - Native Black & White Split Terminal
+   Jupy Brutalism Design System - Split Terminal Drawer (Yellow Prompt & 80% Max Height)
    ========================================================================== */
 
-/* Keep hidden when [hidden] attribute is present */
 .terminal-panel[hidden],
 [hidden] {
   display: none !important;
@@ -40,7 +39,8 @@
 
 .terminal-screen {
   flex: 1;
-  padding: 12px;
+  max-height: 80vh; /* Limits screen to 80% height */
+  padding: 12px 14px 0 14px;
   overflow-y: auto;
   background: #09090B;
   cursor: text;
@@ -49,7 +49,6 @@
   font-family: var(--font-mono);
 }
 
-/* Stark White Output Text (No Green) */
 .terminal-output {
   font-family: var(--font-mono);
   font-size: 0.82rem;
@@ -57,19 +56,24 @@
   color: #F9FAFB;
   white-space: pre-wrap;
   word-break: break-all;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 
 .terminal-input-line {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
+  margin-top: 6px;
   font-family: var(--font-mono);
   font-size: 0.82rem;
 }
 
+/* Yellow Ochre Prompt (#DAA144) */
 .terminal-prompt {
-  color: var(--color-secondary); /* Ochre Gold #DAA144 */
+  color: var(--color-secondary);
   font-weight: 800;
   white-space: nowrap;
 }
@@ -80,9 +84,15 @@
   background: transparent;
   font-family: var(--font-mono);
   font-size: 0.82rem;
-  color: #F9FAFB; /* White Typing Text */
+  color: #F9FAFB;
   outline: none;
   caret-color: #F9FAFB;
   padding: 0;
   margin: 0;
+}
+
+/* Keeps bottom 20% area permanently free */
+.terminal-bottom-spacer {
+  height: 20vh;
+  flex-shrink: 0;
 }

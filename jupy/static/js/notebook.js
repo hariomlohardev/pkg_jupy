@@ -15,6 +15,7 @@ import { setupTerminal } from './terminal.js';
   const terminalScreen = document.getElementById('terminal-screen');
   const terminalOutput = document.getElementById('terminal-output');
   const terminalInput = document.getElementById('terminal-input');
+  const terminalPromptLabel = document.getElementById('terminal-prompt-label');
 
   const cellTpl = document.getElementById('cell-template');
   const insertBarTpl = document.getElementById('insert-bar-template');
@@ -36,7 +37,6 @@ import { setupTerminal } from './terminal.js';
     if (data.type === 'stdout') appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stdout');
     if (data.type === 'stderr') appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stderr');
     if (data.type === 'plot') appendCellPlot(cell, data.html);
-    if (data.type === 'stdin_request') appendCellStdinPrompt(cell, data.prompt);
     if (data.type === 'complete') {
       cell.dom.root.classList.remove('running');
       cell.dom.runBtn.textContent = '▶';
@@ -54,6 +54,7 @@ import { setupTerminal } from './terminal.js';
     terminalScreen,
     terminalOutput,
     terminalInput,
+    terminalPromptLabel,
     () => setTimeout(() => cells.forEach((c) => c.cm.refresh()), 50)
   );
 
@@ -213,49 +214,6 @@ import { setupTerminal } from './terminal.js';
     cell.outputs.push({ kind: 'plot', text: htmlString });
   }
 
-  // Render Interactive Brutalist Stdin Input Box
-  function appendCellStdinPrompt(cell, promptText) {
-    cell.dom.outputEl.hidden = false;
-    const box = document.createElement('div');
-    box.className = 'cell-stdin-prompt';
-
-    const label = document.createElement('span');
-    label.className = 'stdin-label';
-    label.textContent = promptText || 'Input:';
-
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'stdin-input';
-    input.placeholder = 'Type response and press Enter...';
-    input.autocomplete = 'off';
-
-    const submitBtn = document.createElement('button');
-    submitBtn.className = 'btn btn-primary stdin-submit-btn';
-    submitBtn.textContent = 'SUBMIT';
-
-    function submit() {
-      const val = input.value;
-      box.remove();
-      appendCellOutput(cell, (promptText ? promptText + ' ' : '') + val, 'stdout');
-      runSocket.send(JSON.stringify({ action: 'stdin_reply', value: val }));
-    }
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        submit();
-      }
-    });
-    submitBtn.addEventListener('click', submit);
-
-    box.appendChild(label);
-    box.appendChild(input);
-    box.appendChild(submitBtn);
-    cell.dom.outputEl.appendChild(box);
-
-    setTimeout(() => input.focus(), 50);
-  }
-
   function runCell(id, { advance = false, insertBelow = false } = {}) {
     const cell = getCell(id);
     if (!cell || !runSocket || runSocket.readyState !== WebSocket.OPEN) return;
@@ -383,11 +341,11 @@ import { setupTerminal } from './terminal.js';
     else if (k === 'arrowdown') { e.preventDefault(); selectAdjacent(1); }
   });
 
-  // Demo Initial Cell testing interactive input()
+  // Initial Cell
   insertCellAt(0, [
-    '# JUPY - INTERACTIVE INPUT & WEBSOCKET ENGINE',
-    'name = input("Enter your name: ")',
-    'print(f"Hello {name}, welcome to Jupy!")',
+    '# JUPY - UNBUFFERED REAL-TIME ENGINE',
+    'import sys',
+    'print("Executing in virtualenv:", sys.executable)',
   ].join('\n'));
   selectCell(cells[0].id);
 })();

@@ -9,10 +9,13 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, output, input,
     panel.hidden = !panel.hidden;
     if (!panel.hidden) {
       if (!termSocket || termSocket.readyState !== WebSocket.OPEN) {
+        output.textContent = 'Jupy Terminal (.jupy_env) Ready.\n';
         termSocket = createTermSocket((data) => {
           if (data.type === 'output') {
             output.textContent += data.data;
             screen.scrollTop = screen.scrollHeight;
+          } else if (data.type === 'prompt') {
+            if (promptLabel) promptLabel.textContent = data.data;
           } else if (data.type === 'clear') {
             output.textContent = '';
           }
@@ -27,7 +30,6 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, output, input,
   closeBtn.addEventListener('click', toggleTerminal);
   screen.addEventListener('click', () => input.focus());
 
-  // Command Execution on Enter
   input.addEventListener('keydown', (e) => {
     if (!termSocket || termSocket.readyState !== WebSocket.OPEN) return;
 
@@ -38,9 +40,10 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, output, input,
         cmdHistory.push(val);
         historyIdx = cmdHistory.length;
       }
-      
-      // Echo typed input to terminal screen log
-      output.textContent += `${val}\n`;
+
+      const currentPrompt = promptLabel ? promptLabel.textContent : '(jupy_venv) ❯';
+      output.textContent += `${currentPrompt} ${val}\n`;
+
       termSocket.send(JSON.stringify({ type: 'command', cmd: val }));
       input.value = '';
       screen.scrollTop = screen.scrollHeight;

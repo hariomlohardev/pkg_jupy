@@ -45,13 +45,11 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                     frame = make_ws_frame(json.dumps(data_dict))
                     self.wfile.write(frame)
                     self.wfile.flush()
-                except Exception:
-                    pass
+                except Exception: pass
 
         while True:
             msg, opcode = parse_ws_frame(self.rfile)
-            if opcode == 0x8 or msg is None:
-                break
+            if opcode == 0x8 or msg is None: break
             try:
                 req = json.loads(msg)
                 action = req.get("action")
@@ -60,14 +58,9 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                     threading.Thread(target=kernel.execute, args=(code, ws_send), daemon=True).start()
                 elif action == "interrupt":
                     kernel.interrupt()
-                elif action == "stdin_reply":
-                    val = req.get("value", "")
-                    kernel.handle_stdin_reply(val)
-            except Exception:
-                pass
+            except Exception: pass
 
     def handle_terminal_ws(self):
-        term_session = TerminalSession()
         ws_lock = threading.Lock()
 
         def ws_send(data_dict):
@@ -76,11 +69,10 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                     frame = make_ws_frame(json.dumps(data_dict))
                     self.wfile.write(frame)
                     self.wfile.flush()
-                except Exception:
-                    pass
+                except Exception: pass
 
-        # Send initial shell prompt
-        ws_send({"type": "output", "data": f"Jupy Shell (.jupy_env)\n{term_session.get_prompt()}"})
+        term = TerminalSession(ws_send)
+        ws_send({"type": "prompt", "data": term.get_prompt()})
 
         while True:
             msg, opcode = parse_ws_frame(self.rfile)
@@ -91,12 +83,11 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 if data.get("type") == "command":
                     cmd = data.get("cmd", "")
                     threading.Thread(
-                        target=term_session.execute_cmd,
-                        args=(cmd, ws_send),
+                        target=term.execute_cmd,
+                        args=(cmd,),
                         daemon=True
                     ).start()
-            except Exception:
-                pass
+            except Exception: pass
 
     def _send_json(self, data):
         body = json.dumps(data).encode("utf-8")
