@@ -2,7 +2,6 @@ import json
 import os
 import threading
 from http.server import SimpleHTTPRequestHandler
-from jupy.core.autocomplete import get_completions
 from jupy.core.kernel import kernel
 from jupy.core.terminal import TerminalSession
 from jupy.core.venv import VENV_DIR
@@ -26,12 +25,12 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 line = data.get("line", 1)
                 col = data.get("column", 0)
 
-                comps = get_completions(code, line, col, kernel.namespace)
+                # Correct IPC call into persistent kernel worker process
+                comps = kernel.get_completions(code, line, col)
                 self._send_json({"completions": comps})
             else:
                 self.send_error(404, "Endpoint not found")
         except Exception as e:
-            # Return empty completions list rather than dropping socket on error
             self._send_json({"completions": [], "error": str(e)})
 
     def do_GET(self):

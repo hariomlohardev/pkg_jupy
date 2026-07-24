@@ -1,13 +1,12 @@
-let completionDebounceTimer = null;
-
 export function registerAutocomplete(cm) {
-  // Register manual Ctrl+Space / Cmd+Space shortcut
-  cm.setOption('extraKeys', Object.assign({}, cm.getOption('extraKeys'), {
+  // Bind Ctrl+Space and Cmd+Space manual shortcuts
+  cm.addKeyMap({
     'Ctrl-Space': (editor) => triggerHint(editor),
     'Cmd-Space': (editor) => triggerHint(editor),
-  }));
+  });
 
   cm.on('keyup', (editor, event) => {
+    // Exclude navigation, control keys, enter, backspace
     if (
       event.ctrlKey || event.metaKey || event.altKey ||
       event.key === 'Enter' || event.key === 'Escape' ||
@@ -28,41 +27,40 @@ export function registerAutocomplete(cm) {
     const isWord = token.string.trim().length >= 1 && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(token.string);
 
     if (isDot || isWord) {
-      if (completionDebounceTimer) clearTimeout(completionDebounceTimer);
-      completionDebounceTimer = setTimeout(() => {
-        triggerHint(editor);
-      }, 80);
+      // Instant zero-delay execution
+      triggerHint(editor);
     }
   });
 }
 
 function triggerHint(editor) {
   CodeMirror.showHint(editor, fetchJupyCompletions, {
+    async: true,
     completeSingle: false,
     closeOnUnfocus: true
   });
 }
 
-async function fetchJupyCompletions(editor) {
+function fetchJupyCompletions(editor, callback) {
   const cursor = editor.getCursor();
   const code = editor.getValue();
 
-  try {
-    const resp = await fetch('/api/complete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        code: code,
-        line: cursor.line + 1,
-        column: cursor.ch
-      })
-    });
-
-    const data = await resp.json();
+  fetch('/api/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code: code,
+      line: cursor.line + 1,
+      column: cursor.ch
+    })
+  })
+  .then((resp) => resp.json())
+  .then((data) => {
     const list = data.completions || [];
 
     if (list.length === 0) {
-      return { list: [], from: cursor, to: cursor };
+      callback(null);
+      return;
     }
 
     const token = editor.getTokenAt(cursor);
@@ -73,7 +71,7 @@ async function fetchJupyCompletions(editor) {
       start = cursor.ch;
     }
 
-    return {
+    callback({
       list: list.map((item) => ({
         text: item.text,
         displayText: item.text,
@@ -96,8 +94,7 @@ async function fetchJupyCompletions(editor) {
       })),
       from: CodeMirror.Pos(cursor.line, start),
       to: CodeMirror.Pos(cursor.line, end)
-    };
-  } catch (err) {
-    return { list: [], from: cursor, to: cursor };
-  }
+    });
+  })
+  .catch(() => callback(null));
 }
