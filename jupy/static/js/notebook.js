@@ -37,6 +37,7 @@ import { setupTerminal } from './terminal.js';
     if (data.type === 'stdout') appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stdout');
     if (data.type === 'stderr') appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stderr');
     if (data.type === 'plot') appendCellPlot(cell, data.html);
+    if (data.type === 'stdin_request') appendCellStdinPrompt(cell, data.prompt);
     if (data.type === 'complete') {
       cell.dom.root.classList.remove('running');
       cell.dom.runBtn.textContent = '▶';
@@ -198,20 +199,94 @@ import { setupTerminal } from './terminal.js';
 
   function appendCellOutput(cell, text, kind) {
     cell.dom.outputEl.hidden = false;
+    
     const span = document.createElement('span');
     if (kind === 'stderr') span.className = 'stderr-line';
     span.textContent = text + '\n';
     cell.dom.outputEl.appendChild(span);
     cell.outputs.push({ kind, text });
+
+    const spans = cell.dom.outputEl.querySelectorAll('span');
+    if (spans.length > 300) {
+      const overflow = spans.length - 300;
+      for (let i = 0; i < overflow; i++) {
+        spans[i].remove();
+      }
+    }
+
+    requestAnimationFrame(() => {
+      cell.dom.outputEl.scrollTop = cell.dom.outputEl.scrollHeight;
+    });
   }
 
+  // Appends plot only if valid HTML image content exists
   function appendCellPlot(cell, htmlString) {
+    if (!htmlString || !htmlString.trim()) return;
+
     cell.dom.outputEl.hidden = false;
+
+    let plotsWrapper = cell.dom.outputEl.querySelector('.cell-plots-wrapper');
+    if (!plotsWrapper) {
+      plotsWrapper = document.createElement('div');
+      plotsWrapper.className = 'cell-plots-wrapper';
+      cell.dom.outputEl.appendChild(plotsWrapper);
+    }
+
     const div = document.createElement('div');
     div.className = 'plot-container';
     div.innerHTML = htmlString;
-    cell.dom.outputEl.appendChild(div);
+    plotsWrapper.appendChild(div);
+
     cell.outputs.push({ kind: 'plot', text: htmlString });
+
+    requestAnimationFrame(() => {
+      cell.dom.outputEl.scrollTop = cell.dom.outputEl.scrollHeight;
+    });
+  }
+
+  function appendCellStdinPrompt(cell, promptText) {
+    cell.dom.outputEl.hidden = false;
+    const box = document.createElement('div');
+    box.className = 'cell-stdin-prompt';
+
+    const label = document.createElement('span');
+    label.className = 'stdin-label';
+    label.textContent = promptText || 'Input:';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'stdin-input';
+    input.placeholder = 'Type response and press Enter...';
+    input.autocomplete = 'off';
+
+    const submitBtn = document.createElement('button');
+    submitBtn.className = 'btn btn-primary stdin-submit-btn';
+    submitBtn.textContent = 'SUBMIT';
+
+    function submit() {
+      const val = input.value;
+      box.remove();
+      appendCellOutput(cell, (promptText ? promptText + ' ' : '') + val, 'stdout');
+      runSocket.send(JSON.stringify({ action: 'stdin_reply', value: val }));
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        submit();
+      }
+    });
+    submitBtn.addEventListener('click', submit);
+
+    box.appendChild(label);
+    box.appendChild(input);
+    box.appendChild(submitBtn);
+    cell.dom.outputEl.appendChild(box);
+
+    requestAnimationFrame(() => {
+      cell.dom.outputEl.scrollTop = cell.dom.outputEl.scrollHeight;
+      input.focus();
+    });
   }
 
   function runCell(id, { advance = false, insertBelow = false } = {}) {
@@ -341,11 +416,25 @@ import { setupTerminal } from './terminal.js';
     else if (k === 'arrowdown') { e.preventDefault(); selectAdjacent(1); }
   });
 
-  // Initial Cell
+  // Demo Initial Cells
   insertCellAt(0, [
-    '# JUPY - UNBUFFERED REAL-TIME ENGINE',
-    'import sys',
-    'print("Executing in virtualenv:", sys.executable)',
+    '# CELL 1: Render a plot',
+    'import matplotlib.pyplot as plt',
+    'import numpy as np',
+    '',
+    'x = np.linspace(0, 10, 100)',
+    'plt.figure(figsize=(6, 2.5))',
+    'plt.plot(x, np.sin(x), color="#DD614C", linewidth=2, label="sin(x)")',
+    'plt.title("Sine Wave")',
+    'plt.legend()',
   ].join('\n'));
+
+  insertCellAt(1, [
+    '# CELL 2: Execute simple code (No blank plot container will appear)',
+    'print("Executing simple code below a plot cell...")',
+    'for i in range(1, 4):',
+    '    print(f"Step {i} complete")',
+  ].join('\n'));
+
   selectCell(cells[0].id);
 })();

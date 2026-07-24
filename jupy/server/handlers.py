@@ -58,6 +58,9 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                     threading.Thread(target=kernel.execute, args=(code, ws_send), daemon=True).start()
                 elif action == "interrupt":
                     kernel.interrupt()
+                elif action == "stdin_reply":
+                    val = req.get("value", "")
+                    kernel.handle_stdin_reply(val)
             except Exception: pass
 
     def handle_terminal_ws(self):
