@@ -135,14 +135,51 @@ def _interpreter_paths(env_dir):
     )
 
 
+def _venv_is_valid(env_dir):
+    """A venv directory is only really usable if its interpreter actually
+    exists on disk. A directory that exists but is missing this — most often
+    the result of an earlier venv.create() call that was interrupted, or
+    files removed by antivirus software right after creation — is NOT valid,
+    and must be recreated rather than reused as-is forever. Reusing a broken
+    venv like this is what used to make jupy silently spawn a kernel process
+    that could never start, surfacing downstream as a confusing "Kernel
+    communication error: [Errno 22] Invalid argument" the moment a cell tried
+    to run."""
+    python, _ = _interpreter_paths(env_dir)
+    return os.path.isfile(python)
+
+
 def ensure_env(env_dir, on_progress=None):
-    """Creates a venv at env_dir if missing, installs Jupy's per-env deps
-    (currently just Jedi, for in-process completions). Returns (python, bin)."""
+    """Creates a venv at env_dir if missing *or incomplete*, installs Jupy's
+    per-env deps (currently just Jedi, for in-process completions). Returns
+    (python, bin). Raises RuntimeError with a clear, specific reason if the
+    environment still isn't usable afterwards, instead of silently handing
+    back a path to an interpreter that doesn't actually work."""
+    if os.path.exists(env_dir) and not _venv_is_valid(env_dir):
+        if on_progress:
+            on_progress(f"Found an incomplete environment at {env_dir} — recreating…")
+        try:
+            import shutil
+            shutil.rmtree(env_dir)
+        except Exception as e:
+            raise RuntimeError(
+                f"Environment at {env_dir} is incomplete/broken and couldn't be "
+                f"removed to recreate it: {e}. Try deleting that folder manually."
+            ) from e
+
     if not os.path.exists(env_dir):
         if on_progress: on_progress(f"Creating environment at {env_dir}...")
         venv.create(env_dir, with_pip=True)
 
     python, binpath = _interpreter_paths(env_dir)
+
+    if not os.path.isfile(python):
+        raise RuntimeError(
+            f"Failed to create a working Python environment at {env_dir} "
+            f"(expected an interpreter at {python}, but it's missing). This "
+            f"usually means venv creation was interrupted, or antivirus "
+            f"software removed files right after creation."
+        )
 
     try:
         subprocess.run([python, "-c", "import jedi"], check=True, capture_output=True)

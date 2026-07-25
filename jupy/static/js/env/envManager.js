@@ -1,15 +1,27 @@
 /**
  * env/envManager.js
- * Left slide-out "Environment" panel: switch between the global default env,
- * a named global env, or a project-local `.jupy_env`; create new named envs;
- * view active-env details; and manage packages installed in it.
+ * Left slide-out panel with three mutually-exclusive views, each opened from
+ * the "ENVIRONMENT" topbar dropdown (see env/envTopbarMenu.js):
+ *
+ *   - "current" : switch between the global default env, a named global env,
+ *                 or a project-local `.jupy_env`, plus details about whatever
+ *                 is currently active.
+ *   - "create"  : create a new named global env.
+ *   - "pip"     : manage packages (search/install/uninstall) in the active env.
+ *
+ * Only one view is ever shown at a time. Calling openView(view) while a
+ * *different* view is already open swaps to the new one (the old one is
+ * cancelled, not stacked). Calling openView(view) again for the view that's
+ * already open closes the whole panel — a simple toggle.
  */
 export function setupEnvManager({
-  panel, closeBtn,
+  panel, closeBtn, titleEl,
+  views, // { current: HTMLElement, create: HTMLElement, pip: HTMLElement }
   modeRadios, namedSelect, createInput, createBtn, applyBtn, statusLine,
   jupyVersionEl, pythonVersionEl, pathEl, platformEl, packageCountEl,
   statusLabelEl,
   listEl, searchInput, installInput, installBtn,
+  createStatusLine, existingEnvsEl, pipStatusLine,
   showToast, onResize, onEnvSwitched,
 }) {
   let current = null;
@@ -17,6 +29,13 @@ export function setupEnvManager({
   let packages = [];
   let loaded = false;
   let busy = false;
+  let activeView = null;
+
+  const VIEW_LABELS = {
+    current: '📦 CURRENT ENVIRONMENT',
+    create: '➕ CREATE ENVIRONMENT',
+    pip: '📦 PIP MANAGER',
+  };
 
   function escapeHtml(s) {
     const div = document.createElement('div');
@@ -24,12 +43,12 @@ export function setupEnvManager({
     return div.innerHTML;
   }
 
-  function setBusy(isBusy, label) {
+  function setBusy(isBusy, label, targetStatusEl) {
     busy = isBusy;
     applyBtn.disabled = isBusy;
     createBtn.disabled = isBusy;
     installBtn.disabled = isBusy;
-    if (label) statusLine.textContent = label;
+    if (label && targetStatusEl) targetStatusEl.textContent = label;
   }
 
   function syncSelectDisabled() {
@@ -54,6 +73,11 @@ export function setupEnvManager({
     pathEl.textContent = current.path ?? '—';
     platformEl.textContent = current._platform ?? '—';
     packageCountEl.textContent = current.package_count ?? '—';
+  }
+
+  function renderExistingEnvsList() {
+    if (!existingEnvsEl) return;
+    existingEnvsEl.textContent = globalEnvs.length ? globalEnvs.join(', ') : '—';
   }
 
   function renderPackages() {
@@ -95,6 +119,7 @@ export function setupEnvManager({
       globalEnvs = data.global_envs || [];
       renderModeUI();
       renderDetails();
+      renderExistingEnvsList();
     } catch (err) {
       console.error('Failed to load environment info:', err);
       statusLine.textContent = '⚠️ Failed to load environment info.';
@@ -121,7 +146,7 @@ export function setupEnvManager({
     const mode = modeRadios.find((r) => r.checked)?.value || 'global';
     const name = mode === 'named' ? namedSelect.value : undefined;
 
-    setBusy(true, '⏳ Switching environment (first use may take a moment)…');
+    setBusy(true, '⏳ Switching environment (first use may take a moment)…', statusLine);
     try {
       const res = await fetch('/api/env/select', {
         method: 'POST',
@@ -143,7 +168,7 @@ export function setupEnvManager({
       console.error('Environment switch failed:', err);
       showToast('⚠️ ENVIRONMENT SWITCH REQUEST FAILED', 'danger');
     } finally {
-      setBusy(false);
+      setBusy(false, null, statusLine);
       renderModeUI();
     }
   }
@@ -152,7 +177,7 @@ export function setupEnvManager({
     const name = createInput.value.trim();
     if (!name || busy) return;
 
-    setBusy(true, `⏳ Creating "${name}"…`);
+    setBusy(true, `⏳ Creating "${name}"…`, createStatusLine);
     try {
       const res = await fetch('/api/env/create', {
         method: 'POST',
@@ -164,6 +189,7 @@ export function setupEnvManager({
         globalEnvs = data.global_envs || globalEnvs;
         namedSelect.innerHTML = globalEnvs.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
         namedSelect.value = name;
+        renderExistingEnvsList();
         modeRadios.forEach((r) => { r.checked = r.value === 'named'; });
         syncSelectDisabled();
         createInput.value = '';
@@ -176,7 +202,7 @@ export function setupEnvManager({
       console.error('Create environment failed:', err);
       showToast('⚠️ CREATE REQUEST FAILED', 'danger');
     } finally {
-      setBusy(false, current ? `Active: ${current.label}` : '');
+      setBusy(false, current ? `Active: ${current.label}` : '', createStatusLine);
     }
   }
 
@@ -184,7 +210,7 @@ export function setupEnvManager({
     const spec = installInput.value.trim();
     if (!spec || busy) return;
 
-    setBusy(true, `⏳ Installing ${spec}…`);
+    setBusy(true, `⏳ Installing ${spec}…`, pipStatusLine);
     try {
       const res = await fetch('/api/pip/install', {
         method: 'POST',
@@ -208,13 +234,13 @@ export function setupEnvManager({
       console.error('Install request failed:', err);
       showToast('⚠️ INSTALL REQUEST FAILED', 'danger');
     } finally {
-      setBusy(false, current ? `Active: ${current.label}` : '');
+      setBusy(false, current ? `Active: ${current.label}` : '', pipStatusLine);
     }
   }
 
   async function uninstall(name) {
     if (busy) return;
-    setBusy(true, `⏳ Removing ${name}…`);
+    setBusy(true, `⏳ Removing ${name}…`, pipStatusLine);
 
     try {
       const res = await fetch('/api/pip/uninstall', {
@@ -238,23 +264,46 @@ export function setupEnvManager({
       console.error('Uninstall request failed:', err);
       showToast('⚠️ REMOVE REQUEST FAILED', 'danger');
     } finally {
-      setBusy(false, current ? `Active: ${current.label}` : '');
+      setBusy(false, current ? `Active: ${current.label}` : '', pipStatusLine);
     }
   }
 
-  function open() {
+  /** Shows exactly one of the three views, hiding the other two. */
+  function showView(view) {
+    Object.entries(views).forEach(([key, el]) => {
+      if (el) el.hidden = key !== view;
+    });
+    activeView = view;
+    if (titleEl) titleEl.textContent = VIEW_LABELS[view] || '📦 ENVIRONMENT';
+  }
+
+  /**
+   * Opens the given view. If that same view is already open, this instead
+   * closes the panel (toggle). If a *different* view is open, it is
+   * cancelled/replaced by the requested one — only one view is ever visible.
+   */
+  function openView(view) {
+    if (!views[view]) return;
+
+    if (!panel.hidden && activeView === view) {
+      close();
+      return;
+    }
+
+    showView(view);
     panel.hidden = false;
     refreshEnvInfo();
-    if (!loaded) refreshPackages();
+    if (view === 'pip' && !loaded) refreshPackages();
     if (onResize) onResize();
-    setTimeout(() => searchInput.focus(), 50);
+
+    if (view === 'pip') setTimeout(() => searchInput.focus(), 50);
+    else if (view === 'create') setTimeout(() => createInput.focus(), 50);
   }
+
   function close() {
     panel.hidden = true;
+    activeView = null;
     if (onResize) onResize();
-  }
-  function toggle() {
-    panel.hidden ? open() : close();
   }
 
   closeBtn.addEventListener('click', close);
@@ -270,5 +319,5 @@ export function setupEnvManager({
   });
   modeRadios.forEach((r) => r.addEventListener('change', syncSelectDisabled));
 
-  return { open, close, toggle, refreshStatus: refreshEnvInfo };
+  return { openView, close, refreshStatus: refreshEnvInfo };
 }

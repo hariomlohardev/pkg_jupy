@@ -12,6 +12,7 @@ import { initShortcuts } from './shortcuts/shortcuts.js';
 import { createNotebookController } from './notebook/notebookController.js';
 import { downloadNotebook, parseNotebookFile, readFileAsText } from './notebook/notebookFile.js';
 import { initRuntimeMenu } from './runtime/runtimeMenu.js';
+import { initEnvTopbarMenu } from './env/envTopbarMenu.js';
 import { setupEnvManager } from './env/envManager.js';
 
 (() => {
@@ -38,12 +39,20 @@ import { setupEnvManager } from './env/envManager.js';
   const runtimeMenuTrigger = document.getElementById('runtime-menu-trigger');
   const runtimeMenuDropdown = document.getElementById('runtime-menu-dropdown');
 
+  const envTopbarMenu = document.getElementById('env-topbar-menu');
+  const envTopbarMenuTrigger = document.getElementById('env-topbar-menu-trigger');
+  const envTopbarMenuDropdown = document.getElementById('env-topbar-menu-dropdown');
+
   const envPanel = document.getElementById('env-manager-panel');
+  const envPanelTitle = document.getElementById('env-manager-title-text');
   const envCloseBtn = document.getElementById('btn-env-manager-close');
+
+  const envViewCurrent = document.getElementById('env-view-current');
+  const envViewCreate = document.getElementById('env-view-create');
+  const envViewPip = document.getElementById('env-view-pip');
+
   const envModeRadios = Array.from(document.querySelectorAll('input[name="env-mode"]'));
   const envNamedSelect = document.getElementById('env-named-select');
-  const envCreateInput = document.getElementById('env-create-input');
-  const envCreateBtn = document.getElementById('btn-env-create');
   const envApplyBtn = document.getElementById('btn-env-apply');
   const envStatusLine = document.getElementById('env-status-line');
   const envJupyVersion = document.getElementById('env-jupy-version');
@@ -51,10 +60,17 @@ import { setupEnvManager } from './env/envManager.js';
   const envPath = document.getElementById('env-path');
   const envPlatform = document.getElementById('env-platform');
   const envPackageCount = document.getElementById('env-package-count');
+
+  const envCreateInput = document.getElementById('env-create-input');
+  const envCreateBtn = document.getElementById('btn-env-create');
+  const envCreateStatusLine = document.getElementById('env-create-status-line');
+  const envExistingList = document.getElementById('env-existing-list');
+
   const pipManagerList = document.getElementById('pip-manager-list');
   const pipSearchInput = document.getElementById('pip-search-input');
   const pipInstallInput = document.getElementById('pip-install-input');
   const pipInstallBtn = document.getElementById('btn-pip-install');
+  const pipStatusLine = document.getElementById('pip-status-line');
 
   const cellTemplate = document.getElementById('cell-template');
   const insertBarTemplate = document.getElementById('insert-bar-template');
@@ -94,7 +110,9 @@ import { setupEnvManager } from './env/envManager.js';
 
   const envManager = setupEnvManager({
     panel: envPanel,
+    titleEl: envPanelTitle,
     closeBtn: envCloseBtn,
+    views: { current: envViewCurrent, create: envViewCreate, pip: envViewPip },
     modeRadios: envModeRadios,
     namedSelect: envNamedSelect,
     createInput: envCreateInput,
@@ -111,6 +129,9 @@ import { setupEnvManager } from './env/envManager.js';
     searchInput: pipSearchInput,
     installInput: pipInstallInput,
     installBtn: pipInstallBtn,
+    createStatusLine: envCreateStatusLine,
+    existingEnvsEl: envExistingList,
+    pipStatusLine,
     showToast,
     onResize: () => setTimeout(() => notebook.refreshAllEditors(), 50),
     onEnvSwitched: () => showToast('🔄 KERNEL RESTARTED ON NEW ENVIRONMENT', 'danger'),
@@ -122,6 +143,12 @@ import { setupEnvManager } from './env/envManager.js';
     trigger: runtimeMenuTrigger,
     dropdown: runtimeMenuDropdown,
     notebook,
+  });
+
+  initEnvTopbarMenu({
+    menu: envTopbarMenu,
+    trigger: envTopbarMenuTrigger,
+    dropdown: envTopbarMenuDropdown,
     envManager,
   });
 

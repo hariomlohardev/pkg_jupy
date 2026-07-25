@@ -31,8 +31,11 @@ export function registerAutocomplete(cm) {
         Up: (cm, handle) => handle.moveFocus(-1),
         Down: (cm, handle) => handle.moveFocus(1),
         Tab: (cm, handle) => handle.pick(),
+        Enter: (cm, handle) => handle.pick(), // accept the highlighted suggestion
         Esc: (cm, handle) => handle.close(),
-        // deliberately no Enter/Shift-Enter here — those must always run the cell
+        // Shift-Enter/Ctrl-Enter/Cmd-Enter are NOT listed here (different key
+        // names to CodeMirror than plain "Enter"), so they always fall
+        // through untouched to cellFactory.js's run bindings — hint or no hint.
       },
     });
   }

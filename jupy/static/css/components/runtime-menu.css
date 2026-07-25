@@ -2,7 +2,7 @@
    Jupy Brutalism Design System - Runtime Dropdown Menu (Top-Left)
    ========================================================================== */
 
-.menu-block { position: relative; }
+.menu-block { position: relative; display: flex; align-items: center; gap: 8px; }
 
 .runtime-menu { position: relative; }
 
@@ -54,11 +54,29 @@
 
 /* Opens on hover (mouse) or via the .open class toggled by runtimeMenu.js
    (click, keyboard, touch) — see runtime/runtimeMenu.js. */
-.runtime-menu:hover .runtime-menu-dropdown,
+.runtime-menu-dropdown {
+  display: none;
+  flex-direction: column;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 280px;
+  background: var(--color-surface);
+  border: var(--border-thick);
+  border-radius: var(--rounded-sm);
+  box-shadow: var(--shadow-brutal-lg);
+  padding: 5px;
+  z-index: 300;
+}
+
+/* Visibility is controlled entirely by JS via core/dropdownMenu.js, which
+   already implements hover-to-open (mouseenter/mouseleave) with a close
+   delay — a parallel CSS :hover rule here would fight that JS state and
+   keep the dropdown open even after close() runs, if the mouse happens to
+   still be over the menu. .open is the single source of truth. */
 .runtime-menu.open .runtime-menu-dropdown {
   display: flex;
 }
-
 .runtime-menu-item {
   display: flex;
   align-items: center;

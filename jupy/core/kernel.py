@@ -232,8 +232,12 @@ while True:
 """
 
 
-def _force_kill_process(proc):
-    """Forcefully kills process tree instantly."""
+def _kill_process_tree(proc):
+    """Forcefully kills process tree instantly, without touching its
+    stdin/stdout/stderr pipe objects. Safe to call from any thread — including
+    while another thread is concurrently blocked reading/writing those pipes
+    — which is required for interrupt() to work instantly without waiting on
+    comm_lock (see KernelManager.force_interrupt)."""
     if proc and proc.poll() is None:
         try:
             if sys.platform == "win32":
@@ -243,6 +247,41 @@ def _force_kill_process(proc):
         except Exception:
             try:
                 proc.kill()
+            except Exception:
+                pass
+
+
+def _reap_and_close(proc):
+    """Waits for an already-killed process to fully exit, then closes its
+    pipes. Run on a background thread by restart() (see below) so that
+    restart() itself stays instant — it never blocks waiting for comm_lock,
+    exactly like interrupt(), even if a cell is currently running.
+
+    Waiting for the process to actually exit before touching its pipes is
+    what makes this safe to do without holding any lock: once wait() returns,
+    the process (and both ends of its pipes) are fully torn down, so any
+    other thread that was blocked reading/writing them has already unblocked
+    on its own (a dead process's pipes surface as a normal, harmless EOF/
+    write-failure to whoever's using them — see execute()'s retry logic).
+
+    Without this cleanup, a killed process's pipe handles would otherwise get
+    closed implicitly and lazily by the garbage collector at some later,
+    unrelated point in the program. On Windows that deferred close can raise
+    "OSError: [Errno 22] Invalid argument" from inside a finalizer, which
+    Python can't propagate normally and instead prints as a scary-looking but
+    harmless "Exception ignored in: <_io.TextIOWrapper ...>" — closing things
+    ourselves, on our own schedule, avoids that entirely.
+    """
+    if proc is None:
+        return
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        pass
+    for stream in (proc.stdin, proc.stdout, proc.stderr):
+        if stream is not None:
+            try:
+                stream.close()
             except Exception:
                 pass
 
@@ -268,32 +307,66 @@ class KernelManager:
                 env = os.environ.copy()
                 env["PYTHONUNBUFFERED"] = "1"
 
-                self.proc = subprocess.Popen(
-                    [self.python, "-u", "-c", KERNEL_WORKER_SCRIPT],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    bufsize=1,
-                    env=env
-                )
+                try:
+                    proc = subprocess.Popen(
+                        [self.python, "-u", "-c", KERNEL_WORKER_SCRIPT],
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        bufsize=1,
+                        env=env
+                    )
+                except Exception as e:
+                    raise RuntimeError(f"Couldn't launch the Python interpreter at '{self.python}': {e}") from e
+
+                ready = False
                 while True:
-                    line = self.proc.stdout.readline()
-                    if "---JUPY_KERNEL_READY---" in line or not line:
+                    line = proc.stdout.readline()
+                    if "---JUPY_KERNEL_READY---" in line:
+                        ready = True
                         break
+                    if not line:
+                        break
+
+                if not ready:
+                    # The interpreter started but the worker script never got
+                    # far enough to report ready — almost always means this
+                    # environment's Python install is broken/incomplete (see
+                    # core/envmanager.py's ensure_env, which now catches the
+                    # most common cause of this). Surface *why*, using
+                    # whatever the dead process printed to stderr, instead of
+                    # silently leaving self.proc pointed at a dead process —
+                    # that used to surface much later, and far more
+                    # confusingly, as "Kernel communication error: [Errno 22]
+                    # Invalid argument" the moment a cell tried to run.
+                    try:
+                        stderr_output = proc.stderr.read()
+                    except Exception:
+                        stderr_output = ""
+                    try:
+                        proc.wait(timeout=2)
+                    except Exception:
+                        pass
+                    detail = stderr_output.strip() or "it exited immediately with no output"
+                    raise RuntimeError(
+                        f"Couldn't start the Python kernel using '{self.python}': {detail}"
+                    )
+
+                self.proc = proc
 
     def get_completions(self, code, line, col):
         """Sends completion request into worker kernel. Never blocks a
         running cell — returns [] immediately if the kernel is busy, exactly
         like real Jupyter/Colab do."""
-        proc = self.proc
-        if proc is None or proc.poll() is not None:
-            return []
-
         if not self.comm_lock.acquire(blocking=False):
             return []
 
         try:
+            proc = self.proc
+            if proc is None or proc.poll() is not None:
+                return []
+
             req = json.dumps({"action": "complete", "code": code, "line": line, "column": col}) + "\n"
             try:
                 proc.stdin.write(req)
@@ -325,7 +398,7 @@ class KernelManager:
         """Forcefully kills running process instantly without waiting for thread locks."""
         proc = self.proc
         if proc and proc.poll() is None:
-            _force_kill_process(proc)
+            _kill_process_tree(proc)
             return True
         return False
 
@@ -333,11 +406,28 @@ class KernelManager:
         return self.force_interrupt()
 
     def restart(self):
-        """Restarts kernel process (same env), wiping namespace state."""
-        proc = self.proc
-        if proc:
-            _force_kill_process(proc)
+        """Restarts kernel process (same env), wiping namespace state.
+
+        Kills the old process and spawns a new one immediately — this is
+        intentionally NOT gated on comm_lock, so it (and switch_env(), which
+        calls this) stay instant even while a cell is currently running,
+        exactly like interrupt(). The old process's pipes are reaped and
+        closed on a background thread once it has actually exited (see
+        _reap_and_close) instead of synchronously here or left for the
+        garbage collector.
+
+        Because this doesn't wait for comm_lock, there's an inherent tiny
+        window where execute() could grab a reference to the process being
+        killed right here and try to write to it. execute() handles that
+        itself by transparently respawning and retrying once — see below —
+        so switching environments never surfaces a "Kernel communication
+        error" to the user.
+        """
+        old_proc = self.proc
         self.proc = None
+        _kill_process_tree(old_proc)
+        if old_proc is not None:
+            threading.Thread(target=_reap_and_close, args=(old_proc,), daemon=True).start()
         self.exec_count = 0
         self._ensure_kernel_proc()
 
@@ -360,8 +450,6 @@ class KernelManager:
 
     def execute(self, code, ws_send_fn):
         self.exec_count += 1
-        self._ensure_kernel_proc()
-        current_proc = self.proc
 
         lines = code.splitlines()
         pip_cmds = []
@@ -390,19 +478,48 @@ class KernelManager:
 
         with self.comm_lock:
             try:
-                current_proc.stdin.write(req)
-                current_proc.stdin.flush()
+                self._ensure_kernel_proc()
+                current_proc = self.proc
             except Exception as e:
-                ws_send_fn({"type": "stderr", "text": f"Kernel communication error: {str(e)}\n"})
+                # Environment is broken and couldn't start a kernel at all
+                # (see core/kernel.py's _ensure_kernel_proc and
+                # core/envmanager.py's ensure_env for the specific reasons
+                # this can raise). Surface the real reason instead of hanging
+                # the cell forever with no "complete" message.
+                ws_send_fn({"type": "stderr", "text": f"{e}\n"})
                 ws_send_fn({"type": "complete", "exec_count": self.exec_count})
                 return
+
+            try:
+                current_proc.stdin.write(req)
+                current_proc.stdin.flush()
+            except Exception:
+                # current_proc may have just been killed by a concurrent
+                # restart()/switch_env() call — those intentionally don't wait
+                # for comm_lock so they stay instant even mid-execution (see
+                # KernelManager.restart). Recover by respawning a fresh
+                # process and trying once more before giving up.
+                self.proc = None
+                try:
+                    self._ensure_kernel_proc()
+                    current_proc = self.proc
+                    current_proc.stdin.write(req)
+                    current_proc.stdin.flush()
+                except Exception as e:
+                    ws_send_fn({"type": "stderr", "text": f"Kernel communication error: {str(e)}\n"})
+                    ws_send_fn({"type": "complete", "exec_count": self.exec_count})
+                    return
 
             stderr_collecting = False
             plots_collecting = False
             plot_lines = []
 
+
             while current_proc:
-                line = current_proc.stdout.readline()
+                try:
+                    line = current_proc.stdout.readline()
+                except Exception:
+                    line = ""
 
                 if not line:
                     if current_proc.poll() is not None:

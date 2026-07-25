@@ -45,6 +45,18 @@
   gap: 14px;
 }
 
+/* Only one env-view (current / create / pip) is ever visible at a time —
+   opening one from the ENVIRONMENT topbar dropdown hides whichever was
+   previously showing (see env/envManager.js#showView). */
+.env-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+}
+.env-view[hidden] { display: none !important; }
+
 .env-section {
   border: var(--border-thick);
   border-radius: var(--rounded-md);

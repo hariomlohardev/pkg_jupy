@@ -40,9 +40,23 @@
         <button class="runtime-menu-item" id="runtime-restart-run-selected" role="menuitem">
           <span class="runtime-menu-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg></span> Restart and run to selected cell
         </button>
-        <div class="runtime-menu-divider"></div>
-        <button class="runtime-menu-item" id="runtime-environment" role="menuitem">
-          <span class="runtime-menu-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></span> Environment
+      </div>
+    </div>
+
+    <div class="runtime-menu" id="env-topbar-menu">
+      <button class="runtime-menu-trigger" id="env-topbar-menu-trigger" aria-haspopup="true" aria-expanded="false">
+        ENVIRONMENT
+        <svg class="runtime-menu-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="runtime-menu-dropdown" id="env-topbar-menu-dropdown" role="menu">
+        <button class="runtime-menu-item" id="envmenu-current" role="menuitem" data-view="current">
+          <span class="runtime-menu-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></span> Current Environment
+        </button>
+        <button class="runtime-menu-item" id="envmenu-create" role="menuitem" data-view="create">
+          <span class="runtime-menu-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span> Create Environment
+        </button>
+        <button class="runtime-menu-item" id="envmenu-pip" role="menuitem" data-view="pip">
+          <span class="runtime-menu-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span> Pip Manager
         </button>
       </div>
     </div>
@@ -74,58 +88,74 @@
   <!-- Far-Left Split Environment Manager (Hidden by Default) -->
   <aside class="env-manager-panel" id="env-manager-panel" hidden>
     <div class="env-manager-header">
-      <span class="env-manager-title">📦 ENVIRONMENT</span>
+      <span class="env-manager-title" id="env-manager-title-text">📦 ENVIRONMENT</span>
       <button class="action-btn action-danger" id="btn-env-manager-close" title="Close">✕</button>
     </div>
     <div class="env-manager-body">
 
-      <section class="env-section">
-        <h3>ACTIVE ENVIRONMENT</h3>
-        <div class="env-mode-options">
-          <label class="env-mode-option">
-            <input type="radio" name="env-mode" value="global" />
-            <span>Global Default</span>
-          </label>
-          <label class="env-mode-option">
-            <input type="radio" name="env-mode" value="named" />
-            <span>Named Global Env</span>
-            <select id="env-named-select"></select>
-          </label>
-          <label class="env-mode-option">
-            <input type="radio" name="env-mode" value="project" />
-            <span>This Folder Only (.jupy_env)</span>
-          </label>
-        </div>
-        <div class="env-create-row">
-          <input type="text" id="env-create-input" placeholder="new environment name" autocomplete="off" spellcheck="false" />
-          <button class="btn btn-secondary" id="btn-env-create">+ NEW</button>
-        </div>
-        <button class="btn btn-primary" id="btn-env-apply">SWITCH ENVIRONMENT</button>
-        <div class="env-status-line" id="env-status-line"></div>
-      </section>
+      <!-- VIEW: CURRENT ENVIRONMENT -->
+      <div class="env-view" id="env-view-current">
+        <section class="env-section">
+          <h3>ACTIVE ENVIRONMENT</h3>
+          <div class="env-mode-options">
+            <label class="env-mode-option">
+              <input type="radio" name="env-mode" value="global" />
+              <span>Global Default</span>
+            </label>
+            <label class="env-mode-option">
+              <input type="radio" name="env-mode" value="named" />
+              <span>Named Global Env</span>
+              <select id="env-named-select"></select>
+            </label>
+            <label class="env-mode-option">
+              <input type="radio" name="env-mode" value="project" />
+              <span>This Folder Only (.jupy_env)</span>
+            </label>
+          </div>
+          <button class="btn btn-primary" id="btn-env-apply">SWITCH ENVIRONMENT</button>
+          <div class="env-status-line" id="env-status-line"></div>
+        </section>
 
-      <section class="env-section">
-        <h3>DETAILS</h3>
-        <div class="about-row"><span>Jupy Version</span><span id="env-jupy-version">—</span></div>
-        <div class="about-row"><span>Python</span><span id="env-python-version">—</span></div>
-        <div class="about-row"><span>Env Path</span><span id="env-path">—</span></div>
-        <div class="about-row"><span>Platform</span><span id="env-platform">—</span></div>
-        <div class="about-row"><span>Packages</span><span id="env-package-count">—</span></div>
-      </section>
+        <section class="env-section">
+          <h3>DETAILS</h3>
+          <div class="about-row"><span>Jupy Version</span><span id="env-jupy-version">—</span></div>
+          <div class="about-row"><span>Python</span><span id="env-python-version">—</span></div>
+          <div class="about-row"><span>Env Path</span><span id="env-path">—</span></div>
+          <div class="about-row"><span>Platform</span><span id="env-platform">—</span></div>
+          <div class="about-row"><span>Packages</span><span id="env-package-count">—</span></div>
+        </section>
+      </div>
 
-      <section class="env-section env-section-grow">
-        <h3>PACKAGES</h3>
-        <div class="pip-manager-install-row">
-          <input type="text" id="pip-install-input" class="pip-search-input" placeholder="package name, e.g. requests==2.32.0" autocomplete="off" spellcheck="false" />
-          <button class="btn btn-primary" id="btn-pip-install">INSTALL</button>
-        </div>
-        <div class="pip-manager-search-row">
-          <input type="text" id="pip-search-input" class="pip-search-input" placeholder="🔍 search installed packages…" autocomplete="off" spellcheck="false" />
-        </div>
-        <div class="pip-manager-list" id="pip-manager-list">
-          <div class="pip-manager-empty">Loading packages…</div>
-        </div>
-      </section>
+      <!-- VIEW: CREATE ENVIRONMENT -->
+      <div class="env-view" id="env-view-create" hidden>
+        <section class="env-section">
+          <h3>CREATE NEW ENVIRONMENT</h3>
+          <div class="env-create-row">
+            <input type="text" id="env-create-input" placeholder="new environment name" autocomplete="off" spellcheck="false" />
+            <button class="btn btn-secondary" id="btn-env-create">+ NEW</button>
+          </div>
+          <div class="env-status-line" id="env-create-status-line"></div>
+          <div class="about-row"><span>Existing Envs</span><span id="env-existing-list">—</span></div>
+        </section>
+      </div>
+
+      <!-- VIEW: PIP MANAGER -->
+      <div class="env-view" id="env-view-pip" hidden>
+        <section class="env-section env-section-grow">
+          <h3>PACKAGES</h3>
+          <div class="pip-manager-install-row">
+            <input type="text" id="pip-install-input" class="pip-search-input" placeholder="package name, e.g. requests==2.32.0" autocomplete="off" spellcheck="false" />
+            <button class="btn btn-primary" id="btn-pip-install">INSTALL</button>
+          </div>
+          <div class="env-status-line" id="pip-status-line"></div>
+          <div class="pip-manager-search-row">
+            <input type="text" id="pip-search-input" class="pip-search-input" placeholder="🔍 search installed packages…" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="pip-manager-list" id="pip-manager-list">
+            <div class="pip-manager-empty">Loading packages…</div>
+          </div>
+        </section>
+      </div>
 
     </div>
   </aside>
