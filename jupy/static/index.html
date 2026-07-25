@@ -29,6 +29,32 @@
     <span class="brand-name">JUPY</span>
   </div>
 
+  <div class="menu-block">
+    <div class="runtime-menu" id="runtime-menu">
+      <button class="runtime-menu-trigger" id="runtime-menu-trigger" aria-haspopup="true" aria-expanded="false">
+        RUNTIME <span class="runtime-menu-caret">▾</span>
+      </button>
+      <div class="runtime-menu-dropdown" id="runtime-menu-dropdown" role="menu">
+        <button class="runtime-menu-item" id="runtime-restart" role="menuitem">
+          <span class="runtime-menu-icon">🔄</span> Restart
+        </button>
+        <button class="runtime-menu-item" id="runtime-restart-run-all" role="menuitem">
+          <span class="runtime-menu-icon">⏩</span> Restart and run all
+        </button>
+        <button class="runtime-menu-item" id="runtime-restart-run-selected" role="menuitem">
+          <span class="runtime-menu-icon">⏭</span> Restart and run to selected cell
+        </button>
+        <div class="runtime-menu-divider"></div>
+        <button class="runtime-menu-item" id="runtime-pip-manager" role="menuitem">
+          <span class="runtime-menu-icon">📦</span> Pip Manager
+        </button>
+        <button class="runtime-menu-item" id="runtime-about" role="menuitem">
+          <span class="runtime-menu-icon">ℹ️</span> About Jupyvenv
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div class="title-block">
     <div class="filename-wrapper">
       <input id="filename" class="filename-input" value="Untitled.ipynb" spellcheck="false" autocomplete="off" />
@@ -53,6 +79,24 @@
 
 <!-- Main Workspace Split Container -->
 <div class="app-workspace" id="app-workspace">
+  <!-- Far-Left Split Pip Manager (Hidden by Default) -->
+  <aside class="pip-manager-panel" id="pip-manager-panel" hidden>
+    <div class="pip-manager-header">
+      <span class="pip-manager-title">📦 PIP MANAGER (.jupy_env)</span>
+      <button class="action-btn action-danger" id="btn-pip-manager-close" title="Close Pip Manager">✕</button>
+    </div>
+    <div class="pip-manager-install-row">
+      <input type="text" id="pip-install-input" class="pip-search-input" placeholder="package name, e.g. requests==2.32.0" autocomplete="off" spellcheck="false" />
+      <button class="btn btn-primary" id="btn-pip-install">INSTALL</button>
+    </div>
+    <div class="pip-manager-search-row">
+      <input type="text" id="pip-search-input" class="pip-search-input" placeholder="🔍 search installed packages…" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="pip-manager-list" id="pip-manager-list">
+      <div class="pip-manager-empty">Loading packages…</div>
+    </div>
+  </aside>
+
   <!-- Left Side: Notebook Cells -->
   <div class="notebook-panel">
     <main class="notebook" id="notebook"></main>
@@ -104,6 +148,23 @@
     </div>
   </div>
 </footer>
+
+<!-- About Jupyvenv Modal -->
+<div class="about-overlay" id="about-modal" hidden>
+  <div class="about-modal">
+    <div class="about-header">
+      <span class="about-title">ℹ️ ABOUT JUPYVENV</span>
+      <button class="about-close-btn" id="btn-about-close">✕</button>
+    </div>
+    <div class="about-body">
+      <div class="about-row"><span>Jupy Version</span><span id="about-jupy-version">—</span></div>
+      <div class="about-row"><span>Python (.jupy_env)</span><span id="about-python-version">—</span></div>
+      <div class="about-row"><span>Venv Directory</span><span id="about-venv-dir">—</span></div>
+      <div class="about-row"><span>Platform</span><span id="about-platform">—</span></div>
+      <div class="about-row"><span>Installed Packages</span><span id="about-package-count">—</span></div>
+    </div>
+  </div>
+</div>
 
 <!-- Templates -->
 <template id="cell-template">

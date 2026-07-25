@@ -11,13 +11,12 @@
  * and the "+ CODE CELL" button at the bottom of the notebook, had no click
  * handlers at all. They're wired up below via notebook/notebookFile.js.
  *
- * ASSUMPTION: the compiled `js/` bundle this refactor was done from only
- * contained .js files, not index.html, so the exact ids of the Open/Save/
- * bottom-add-cell buttons weren't available. `btn-open`, `btn-save`, and
- * `btn-add-cell` below are a best guess following the existing `btn-*`
- * naming convention (btn-run-all, btn-theme-toggle, btn-terminal-toggle,
- * ...) — update these three `getElementById` calls if your index.html uses
- * different ids.
+ * BUG FIX: the bottom "+ CODE CELL" button was still dead after the above
+ * fix. It had been wired to `btn-add-cell`, a best guess made when this
+ * file was first migrated (the bundle available at the time had no
+ * index.html to check ids against). The real index.html has now been
+ * reviewed — the button's actual id is `btn-add-bottom` — so the lookup
+ * below is corrected. `btn-open` and `btn-save` were confirmed correct.
  */
 import { initTheme } from './theme/theme.js';
 import { initMetricsStream } from './metrics/metrics.js';
@@ -28,6 +27,9 @@ import { registerAutocomplete } from './autocomplete/autocomplete.js';
 import { initShortcuts } from './shortcuts/shortcuts.js';
 import { createNotebookController } from './notebook/notebookController.js';
 import { downloadNotebook, parseNotebookFile, readFileAsText } from './notebook/notebookFile.js';
+import { initRuntimeMenu } from './runtime/runtimeMenu.js';
+import { setupPipManager } from './pip/pipManager.js';
+import { setupAboutDialog } from './runtime/aboutDialog.js';
 
 (() => {
   const container = document.getElementById('notebook');
@@ -35,7 +37,7 @@ import { downloadNotebook, parseNotebookFile, readFileAsText } from './notebook/
   const fileInput = document.getElementById('file-input');
   const openBtn = document.getElementById('btn-open');
   const saveBtn = document.getElementById('btn-save');
-  const addCellBtn = document.getElementById('btn-add-cell');
+  const addCellBtn = document.getElementById('btn-add-bottom');
   const runAllBtn = document.getElementById('btn-run-all');
   const themeToggleBtn = document.getElementById('btn-theme-toggle');
   const toastContainer = document.getElementById('toast-container');
@@ -47,6 +49,20 @@ import { downloadNotebook, parseNotebookFile, readFileAsText } from './notebook/
   const terminalOutput = document.getElementById('terminal-output');
   const terminalInput = document.getElementById('terminal-input');
   const terminalPromptLabel = document.getElementById('terminal-prompt-label');
+
+  const runtimeMenu = document.getElementById('runtime-menu');
+  const runtimeMenuTrigger = document.getElementById('runtime-menu-trigger');
+  const runtimeMenuDropdown = document.getElementById('runtime-menu-dropdown');
+
+  const pipManagerPanel = document.getElementById('pip-manager-panel');
+  const pipManagerCloseBtn = document.getElementById('btn-pip-manager-close');
+  const pipManagerList = document.getElementById('pip-manager-list');
+  const pipSearchInput = document.getElementById('pip-search-input');
+  const pipInstallInput = document.getElementById('pip-install-input');
+  const pipInstallBtn = document.getElementById('btn-pip-install');
+
+  const aboutModal = document.getElementById('about-modal');
+  const aboutCloseBtn = document.getElementById('btn-about-close');
 
   const cellTemplate = document.getElementById('cell-template');
   const insertBarTemplate = document.getElementById('insert-bar-template');
@@ -88,6 +104,31 @@ import { downloadNotebook, parseNotebookFile, readFileAsText } from './notebook/
   );
 
   initShortcuts(notebook);
+
+  const pipManager = setupPipManager({
+    panel: pipManagerPanel,
+    closeBtn: pipManagerCloseBtn,
+    listEl: pipManagerList,
+    searchInput: pipSearchInput,
+    installInput: pipInstallInput,
+    installBtn: pipInstallBtn,
+    showToast,
+    onResize: () => setTimeout(() => notebook.refreshAllEditors(), 50),
+  });
+
+  const aboutDialog = setupAboutDialog({
+    overlay: aboutModal,
+    closeBtn: aboutCloseBtn,
+  });
+
+  initRuntimeMenu({
+    menu: runtimeMenu,
+    trigger: runtimeMenuTrigger,
+    dropdown: runtimeMenuDropdown,
+    notebook,
+    pipManager,
+    aboutDialog,
+  });
 
   runAllBtn.addEventListener('click', () => notebook.runAll());
 

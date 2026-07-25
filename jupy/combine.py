@@ -89,3 +89,4 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     combine_files_to_markdown(output_filename=args.output, user_excludes=args.exclude)
+

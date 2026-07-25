@@ -1,13 +1,21 @@
 import json
 import os
+import platform
 import threading
 import time
 from http.server import SimpleHTTPRequestHandler
+from jupy import __version__ as JUPY_VERSION
 from jupy.core.autocomplete import get_completions
 from jupy.core.kernel import kernel
 from jupy.core.metrics import get_system_metrics
 from jupy.core.terminal import TerminalSession
-from jupy.core.venv import VENV_DIR
+from jupy.core.venv import (
+    VENV_DIR,
+    get_python_version,
+    install_package,
+    list_packages,
+    uninstall_package,
+)
 from jupy.server.protocol import make_ws_accept, make_ws_frame, parse_ws_frame
 
 STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
@@ -30,10 +38,30 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
 
                 comps = kernel.get_completions(code, line, col)
                 self._send_json({"completions": comps})
+
+            elif self.path == "/api/restart":
+                # BUG FIX: the frontend has always called this endpoint to restart the
+                # kernel (see notebook/notebookController.js), but it never had a route
+                # here — every restart request silently 404'd.
+                kernel.restart()
+                self._send_json({"status": "restarted", "exec_count": kernel.exec_count})
+
+            elif self.path == "/api/pip/install":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                name = data.get("name", "")
+                success, output = install_package(name)
+                self._send_json({"success": success, "output": output, "packages": list_packages()})
+
+            elif self.path == "/api/pip/uninstall":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                name = data.get("name", "")
+                success, output = uninstall_package(name)
+                self._send_json({"success": success, "output": output, "packages": list_packages()})
+
             else:
                 self.send_error(404, "Endpoint not found")
         except Exception as e:
-            self._send_json({"completions": [], "error": str(e)})
+            self._send_json({"success": False, "error": str(e)})
 
     def do_GET(self):
         if self.headers.get("Upgrade", "").lower() == "websocket":
@@ -53,9 +81,26 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
             elif self.path == "/ws/metrics":
                 self.handle_metrics_ws()
             return
+        
 
-        if self.path == "/api/status":
+        elif self.path == "/api/status":
             self._send_json({"status": "ready", "exec_count": kernel.exec_count, "venv": VENV_DIR})
+            
+
+        elif self.path == "/api/pip/list":
+            self._send_json({"packages": list_packages()})
+
+
+        elif self.path == "/api/about":
+            packages = list_packages()
+            self._send_json({
+                "jupy_version": JUPY_VERSION,
+                "python_version": get_python_version(),
+                "venv_dir": VENV_DIR,
+                "platform": platform.platform(),
+                "package_count": len(packages),
+            })
+
         else:
             super().do_GET()
 

@@ -248,21 +248,33 @@ export function createNotebookController({ container, templates, runSocket, show
     }
   }
 
-  function restartKernel() {
-    fetch('/api/restart', { method: 'POST' })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Server responded with ${res.status}`);
-        cells.forEach((c) => {
-          c.execCount = null;
-          c.dom.execCountEl.textContent = '[\u00A0]';
-          clearCellOutput(c);
-        });
-        showToast('🔄 KERNEL RESTARTED', 'danger');
-      })
-      .catch((err) => {
-        console.error('Kernel restart failed:', err);
-        showToast('⚠️ FAILED TO RESTART KERNEL', 'danger');
+  /**
+   * Shared restart implementation — hits POST /api/restart, wipes exec counts
+   * and outputs on success. Returns a promise<boolean> so the "Restart and
+   * run…" Runtime-menu actions can wait for the kernel to actually come back
+   * before submitting cells to it.
+   */
+  async function performRestart() {
+    try {
+      const res = await fetch('/api/restart', { method: 'POST' });
+      if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+      cells.forEach((c) => {
+        c.execCount = null;
+        c.dom.execCountEl.textContent = '[\u00A0]';
+        clearCellOutput(c);
       });
+      return true;
+    } catch (err) {
+      console.error('Kernel restart failed:', err);
+      showToast('⚠️ FAILED TO RESTART KERNEL', 'danger');
+      return false;
+    }
+  }
+
+  function restartKernel() {
+    performRestart().then((ok) => {
+      if (ok) showToast('🔄 KERNEL RESTARTED', 'danger');
+    });
   }
 
   function interruptKernel() {
@@ -274,6 +286,38 @@ export function createNotebookController({ container, templates, runSocket, show
 
   function runAll() {
     [...cells].forEach((cell) => runCell(cell.id, { advance: false }));
+  }
+
+  /** Restarts the kernel, then (on success) runs every cell top to bottom. */
+  async function restartAndRunAll() {
+    const ok = await performRestart();
+    if (ok) {
+      showToast('🔄 KERNEL RESTARTED — RUNNING ALL CELLS', 'danger');
+      runAll();
+    }
+  }
+
+  /**
+   * Restarts the kernel, then (on success) runs every cell from the top
+   * through a target cell — the currently selected cell if one is selected,
+   * otherwise the last cell that had already been run before the restart.
+   * If neither applies (nothing selected, nothing ever run) it falls back to
+   * just the first cell, rather than guessing and running the whole notebook.
+   */
+  async function restartAndRunToSelected() {
+    let targetIdx = selectedId ? indexOf(selectedId) : -1;
+    if (targetIdx === -1) {
+      cells.forEach((c, i) => {
+        if (c.execCount != null) targetIdx = i;
+      });
+    }
+    if (targetIdx === -1) targetIdx = 0;
+
+    const ok = await performRestart();
+    if (ok) {
+      showToast('🔄 KERNEL RESTARTED — RUNNING TO SELECTED CELL', 'danger');
+      cells.slice(0, targetIdx + 1).forEach((c) => runCell(c.id, { advance: false }));
+    }
   }
 
   /** Replaces every cell in the notebook with the given list of source strings. */
@@ -307,6 +351,8 @@ export function createNotebookController({ container, templates, runSocket, show
     selectAdjacent,
     runCell,
     restartKernel,
+    restartAndRunAll,
+    restartAndRunToSelected,
     interruptKernel,
     runAll,
     loadNotebook,

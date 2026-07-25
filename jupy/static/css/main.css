@@ -1,10 +1,14 @@
 @import "base/variables.css";
 @import "components/topbar.css";
+@import "components/runtime-menu.css";
 @import "components/cells.css";
 @import "components/terminal.css";
+@import "components/pip-manager.css";
 @import "components/editor.css";
 @import "components/system-bar.css";
+
 @import "components/shortcuts-dialog.css"; /* New Import */
+@import "components/about-modal.css";
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; }

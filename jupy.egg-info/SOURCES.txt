@@ -3,6 +3,7 @@ pyproject.toml
 jupy/__init__.py
 jupy/__main__.py
 jupy/cli.py
+jupy/combine.py
 jupy/server.py
 jupy.egg-info/PKG-INFO
 jupy.egg-info/SOURCES.txt
@@ -17,3 +18,4 @@ jupy/core/venv.py
 jupy/server/__init__.py
 jupy/server/handlers.py
 jupy/server/protocol.py
+jupy/static/js/filename.py
