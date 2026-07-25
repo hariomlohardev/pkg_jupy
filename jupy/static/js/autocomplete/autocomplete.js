@@ -27,6 +27,13 @@ export function registerAutocomplete(cm) {
       async: true,
       completeSingle: false,
       closeOnUnfocus: true,
+      customKeys: {
+        Up: (cm, handle) => handle.moveFocus(-1),
+        Down: (cm, handle) => handle.moveFocus(1),
+        Tab: (cm, handle) => handle.pick(),
+        Esc: (cm, handle) => handle.close(),
+        // deliberately no Enter/Shift-Enter here — those must always run the cell
+      },
     });
   }
 

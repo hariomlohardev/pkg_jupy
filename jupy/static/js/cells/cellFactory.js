@@ -55,15 +55,13 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
     indentWithTabs: false,
     autoCloseBrackets: true,
     extraKeys: {
-      'Shift-Enter': () => hooks.onRun(cell.id, { advance: true }),
-      'Ctrl-Enter': () => hooks.onRun(cell.id, { advance: false }),
-      'Cmd-Enter': () => hooks.onRun(cell.id, { advance: false }),
-      'Alt-Enter': () => hooks.onRun(cell.id, { insertBelow: true }),
+      'Shift-Enter': (editor) => { editor.state.completionActive?.close(); hooks.onRun(cell.id, { advance: true }); },
+      'Ctrl-Enter': (editor) => { editor.state.completionActive?.close(); hooks.onRun(cell.id, { advance: false }); },
+      'Cmd-Enter': (editor) => { editor.state.completionActive?.close(); hooks.onRun(cell.id, { advance: false }); },
+      'Alt-Enter': (editor) => { editor.state.completionActive?.close(); hooks.onRun(cell.id, { insertBelow: true }); },
       Esc: () => hooks.onExitEdit(cell.id),
-      // Edit Mode line shuffling shortcuts
       'Alt-Up': (editor) => moveLineUp(editor),
       'Alt-Down': (editor) => moveLineDown(editor),
-      // Native commenting toggle
       'Ctrl-/': (editor) => toggleComment(editor),
       'Cmd-/': (editor) => toggleComment(editor),
     },

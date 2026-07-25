@@ -243,6 +243,7 @@ class KernelManager:
         self.proc = None
         self.lock = threading.Lock()
         self._ensure_kernel_proc()
+        self.comm_lock = threading.Lock()
 
     def _ensure_kernel_proc(self):
         with self.lock:
@@ -265,35 +266,39 @@ class KernelManager:
                         break
 
     def get_completions(self, code, line, col):
-        """Sends completion request into worker kernel."""
+        """Sends completion request into worker kernel. Never blocks a running cell."""
         proc = self.proc
         if proc is None or proc.poll() is not None:
             return []
 
-        req = json.dumps({"action": "complete", "code": code, "line": line, "column": col}) + "\n"
+        if not self.comm_lock.acquire(blocking=False):
+            return []  # kernel busy running a cell — skip instead of queueing/blocking
+
         try:
-            proc.stdin.write(req)
-            proc.stdin.flush()
-        except Exception:
+            req = json.dumps({"action": "complete", "code": code, "line": line, "column": col}) + "\n"
+            try:
+                proc.stdin.write(req)
+                proc.stdin.flush()
+            except Exception:
+                return []
+
+            while proc and proc.poll() is None:
+                line_str = proc.stdout.readline()
+                if not line_str:
+                    break
+                if line_str.startswith("---JUPY_COMPS:"):
+                    json_str = line_str.replace("---JUPY_COMPS:", "").strip()
+                    if json_str.endswith("---"):
+                        json_str = json_str[:-3]
+                    try:
+                        return json.loads(json_str)
+                    except Exception:
+                        return []
+                elif "---JUPY_CELL_COMPLETE---" in line_str:
+                    break
             return []
-
-        while proc and proc.poll() is None:
-            line_str = proc.stdout.readline()
-            if not line_str:
-                break
-
-            if line_str.startswith("---JUPY_COMPS:"):
-                json_str = line_str.replace("---JUPY_COMPS:", "").strip()
-                if json_str.endswith("---"):
-                    json_str = json_str[:-3]
-                try:
-                    return json.loads(json_str)
-                except Exception:
-                    return []
-            elif "---JUPY_CELL_COMPLETE---" in line_str:
-                break
-
-        return []
+        finally:
+            self.comm_lock.release()
 
     def force_interrupt(self):
         """Forcefully kills running process instantly without waiting for thread locks."""
@@ -353,58 +358,52 @@ class KernelManager:
             return
 
         req = json.dumps({"action": "execute", "code": clean_code}) + "\n"
-        try:
-            current_proc.stdin.write(req)
-            current_proc.stdin.flush()
-        except Exception as e:
-            ws_send_fn({"type": "stderr", "text": f"Kernel communication error: {str(e)}\n"})
-            ws_send_fn({"type": "complete", "exec_count": self.exec_count})
-            return
+        with self.comm_lock:
+            try:
+                current_proc.stdin.write(req)
+                current_proc.stdin.flush()
+            except Exception as e:
+                ws_send_fn({"type": "stderr", "text": f"Kernel communication error: {str(e)}\n"})
+                ws_send_fn({"type": "complete", "exec_count": self.exec_count})
+                return
 
-        stderr_collecting = False
-        plots_collecting = False
-        plot_lines = []
+            stderr_collecting = False
+            plots_collecting = False
+            plot_lines = []
 
-        while current_proc:
-            line = current_proc.stdout.readline()
-
-            # Detect if process was force-killed by user interrupt
-            if not line:
-                if current_proc.poll() is not None:
-                    ws_send_fn({"type": "stderr", "text": "\n⏹ Execution force stopped by user.\n"})
-                break
-
-            if line.startswith("---JUPY_STDIN_REQ:"):
-                prompt = line.replace("---JUPY_STDIN_REQ:", "").replace("---", "").strip()
-                ws_send_fn({"type": "stdin_request", "prompt": prompt})
-                continue
-
-            if "---JUPY_CELL_COMPLETE---" in line:
-                break
-
-            if "---JUPY_STDERR_START---" in line:
-                stderr_collecting = True
-                continue
-            if "---JUPY_STDERR_END---" in line:
-                stderr_collecting = False
-                continue
-
-            if "---JUPY_PLOTS_START---" in line:
-                plots_collecting = True
-                continue
-            if "---JUPY_PLOTS_END---" in line:
-                plots_collecting = False
-                for p in plot_lines:
-                    ws_send_fn({"type": "plot", "html": p})
-                plot_lines = []
-                continue
-
-            if stderr_collecting:
-                ws_send_fn({"type": "stderr", "text": line})
-            elif plots_collecting:
-                plot_lines.append(line.strip())
-            else:
-                ws_send_fn({"type": "stdout", "text": line})
+            while current_proc:
+                line = current_proc.stdout.readline()
+                if not line:
+                    if current_proc.poll() is not None:
+                        ws_send_fn({"type": "stderr", "text": "\n⏹ Execution force stopped by user.\n"})
+                    break
+                if line.startswith("---JUPY_STDIN_REQ:"):
+                    prompt = line.replace("---JUPY_STDIN_REQ:", "").replace("---", "").strip()
+                    ws_send_fn({"type": "stdin_request", "prompt": prompt})
+                    continue
+                if "---JUPY_CELL_COMPLETE---" in line:
+                    break
+                if "---JUPY_STDERR_START---" in line:
+                    stderr_collecting = True
+                    continue
+                if "---JUPY_STDERR_END---" in line:
+                    stderr_collecting = False
+                    continue
+                if "---JUPY_PLOTS_START---" in line:
+                    plots_collecting = True
+                    continue
+                if "---JUPY_PLOTS_END---" in line:
+                    plots_collecting = False
+                    for p in plot_lines:
+                        ws_send_fn({"type": "plot", "html": p})
+                    plot_lines = []
+                    continue
+                if stderr_collecting:
+                    ws_send_fn({"type": "stderr", "text": line})
+                elif plots_collecting:
+                    plot_lines.append(line.strip())
+                else:
+                    ws_send_fn({"type": "stdout", "text": line})
 
         ws_send_fn({"type": "complete", "exec_count": self.exec_count})
 

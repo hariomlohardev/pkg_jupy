@@ -154,8 +154,11 @@ export function createNotebookController({ container, templates, runSocket, show
     if (idx === cells.length - 1) {
       insertCellAt(idx + 1, '', { focus: true });
     } else {
-      selectCell(cells[idx + 1].id);
-      cells[idx + 1].dom.root.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      document.activeElement?.blur();
+      const next = cells[idx + 1];
+      enterEditMode(next.id);
+      next.cm.focus();
+      next.dom.root.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }
 
@@ -172,6 +175,13 @@ export function createNotebookController({ container, templates, runSocket, show
 
     if (runningCellId === id) {
       showToast('⚠️ CELL ALREADY RUNNING', 'warning');
+      // Advance focus to the next cell even though we're not re-running it —
+      // matches the "queued" branch below. Without this, Shift+Enter on a
+      // cell that is itself still executing (a loop, sleep(), waiting on
+      // stdin, or just enough websocket latency to notice) leaves the
+      // selection stuck instead of moving down, which is the one case that
+      // looked like "Shift+Enter sometimes doesn't advance."
+      if (advance) advanceSelectionAfter(idx);
       return;
     }
 

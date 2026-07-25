@@ -21,7 +21,16 @@ export function initShortcuts(actions) {
   let lastIPress = 0;
   let lastZeroPress = 0;
 
-  document.addEventListener('keydown', (e) => {
+   document.addEventListener('keydown', (e) => {
+    // Keydowns originating inside a CodeMirror editor are fully owned by that
+    // editor's own extraKeys (see cells/cellFactory.js). Cell state can change
+    // synchronously mid-event (Shift-Enter advances selection), so re-checking
+    // state here for the same event is unreliable and caused Shift-Enter to
+    // run both the old cell and the newly-selected one. Always bail instead.
+    if (e.target.closest && e.target.closest('.CodeMirror')) {
+      return;
+    }
+
     const isEditing = actions.getEditingId() !== null;
     const activeEl = document.activeElement;
 

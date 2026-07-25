@@ -1,8 +1,8 @@
 ---
 title: Folder Code Compilation
-date: 2026-07-25 07:24:27
+date: 2026-07-25 13:38:58
 root_folder: "jupy"
-total_compiled_files: 41
+total_compiled_files: 46
 ---
 
 # File: cli.py
@@ -22,7 +22,7 @@ class ThreadingServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 def main():
     parser = argparse.ArgumentParser(description="Jupy - Brutalist Local Python Notebook")
-    parser.add_argument("--port", type=int, default=8888, help="Port to run server on (default: 8888)")
+    parser.add_argument("--port", type=int, default=8000, help="Port to run server on (default: 8000)")
     parser.add_argument("--no-browser", action="store_true", help="Do not automatically open browser")
     args = parser.parse_args()
 
@@ -45,6 +45,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 ```
 
 
@@ -144,6 +145,7 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     combine_files_to_markdown(output_filename=args.output, user_excludes=args.exclude)
+
 
 ```
 
@@ -482,6 +484,7 @@ def start_server(port=8888):
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", port), JupyHTTPHandler) as httpd:
         httpd.serve_forever()
+
 ```
 
 
@@ -492,6 +495,7 @@ def start_server(port=8888):
 ```py
 """Jupy - Lightweight Brutalist Python Notebook"""
 __version__ = "0.1.0"
+
 ```
 
 
@@ -504,6 +508,7 @@ from jupy.cli import main
 
 if __name__ == "__main__":
     main()
+
 ```
 
 
@@ -642,6 +647,7 @@ def get_completions(code, line, column, namespace):
         pass
 
     return completions
+
 ```
 
 
@@ -1062,6 +1068,7 @@ class KernelManager:
 
 
 kernel = KernelManager()
+
 ```
 
 
@@ -1191,6 +1198,7 @@ metrics_sampler = MetricsSampler(window_seconds=5.0)
 def get_system_metrics():
     """Returns instant 5-second moving average system metrics."""
     return metrics_sampler.get_5sec_average()
+
 ```
 
 
@@ -1280,6 +1288,7 @@ class TerminalSession:
         except Exception as e:
             self.ws_send_fn({"type": "output", "data": f"Error: {str(e)}\n"})
             self.ws_send_fn({"type": "prompt", "data": self.get_prompt()})
+
 ```
 
 
@@ -1337,7 +1346,7 @@ def list_packages():
         packages.sort(key=lambda p: p["name"].lower())
         return packages
     except Exception:
-        return []
+        return ['ss']
 
 
 def install_package(spec):
@@ -1384,6 +1393,7 @@ def get_python_version():
         return (result.stdout or result.stderr or "").strip()
     except Exception:
         return "unknown"
+
 ```
 
 
@@ -1392,6 +1402,7 @@ def get_python_version():
 # File: core\__init__.py
 
 ```py
+
 
 ```
 
@@ -1484,12 +1495,15 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
             elif self.path == "/ws/metrics":
                 self.handle_metrics_ws()
             return
+        
 
-        if self.path == "/api/status":
+        elif self.path == "/api/status":
             self._send_json({"status": "ready", "exec_count": kernel.exec_count, "venv": VENV_DIR})
+            
 
         elif self.path == "/api/pip/list":
             self._send_json({"packages": list_packages()})
+
 
         elif self.path == "/api/about":
             packages = list_packages()
@@ -1590,6 +1604,7 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
 ```
 
 
@@ -1647,6 +1662,7 @@ def make_ws_frame(message):
     else:
         header = struct.pack(">BBQ", 0x81, 127, length)
     return header + data
+
 ```
 
 
@@ -1695,6 +1711,32 @@ def make_ws_frame(message):
     <span class="brand-name">JUPY</span>
   </div>
 
+  <div class="menu-block">
+    <div class="runtime-menu" id="runtime-menu">
+      <button class="runtime-menu-trigger" id="runtime-menu-trigger" aria-haspopup="true" aria-expanded="false">
+        RUNTIME <span class="runtime-menu-caret">▾</span>
+      </button>
+      <div class="runtime-menu-dropdown" id="runtime-menu-dropdown" role="menu">
+        <button class="runtime-menu-item" id="runtime-restart" role="menuitem">
+          <span class="runtime-menu-icon">🔄</span> Restart
+        </button>
+        <button class="runtime-menu-item" id="runtime-restart-run-all" role="menuitem">
+          <span class="runtime-menu-icon">⏩</span> Restart and run all
+        </button>
+        <button class="runtime-menu-item" id="runtime-restart-run-selected" role="menuitem">
+          <span class="runtime-menu-icon">⏭</span> Restart and run to selected cell
+        </button>
+        <div class="runtime-menu-divider"></div>
+        <button class="runtime-menu-item" id="runtime-pip-manager" role="menuitem">
+          <span class="runtime-menu-icon">📦</span> Pip Manager
+        </button>
+        <button class="runtime-menu-item" id="runtime-about" role="menuitem">
+          <span class="runtime-menu-icon">ℹ️</span> About Jupyvenv
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div class="title-block">
     <div class="filename-wrapper">
       <input id="filename" class="filename-input" value="Untitled.ipynb" spellcheck="false" autocomplete="off" />
@@ -1719,6 +1761,24 @@ def make_ws_frame(message):
 
 <!-- Main Workspace Split Container -->
 <div class="app-workspace" id="app-workspace">
+  <!-- Far-Left Split Pip Manager (Hidden by Default) -->
+  <aside class="pip-manager-panel" id="pip-manager-panel" hidden>
+    <div class="pip-manager-header">
+      <span class="pip-manager-title">📦 PIP MANAGER (.jupy_env)</span>
+      <button class="action-btn action-danger" id="btn-pip-manager-close" title="Close Pip Manager">✕</button>
+    </div>
+    <div class="pip-manager-install-row">
+      <input type="text" id="pip-install-input" class="pip-search-input" placeholder="package name, e.g. requests==2.32.0" autocomplete="off" spellcheck="false" />
+      <button class="btn btn-primary" id="btn-pip-install">INSTALL</button>
+    </div>
+    <div class="pip-manager-search-row">
+      <input type="text" id="pip-search-input" class="pip-search-input" placeholder="🔍 search installed packages…" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="pip-manager-list" id="pip-manager-list">
+      <div class="pip-manager-empty">Loading packages…</div>
+    </div>
+  </aside>
+
   <!-- Left Side: Notebook Cells -->
   <div class="notebook-panel">
     <main class="notebook" id="notebook"></main>
@@ -1771,6 +1831,23 @@ def make_ws_frame(message):
   </div>
 </footer>
 
+<!-- About Jupyvenv Modal -->
+<div class="about-overlay" id="about-modal" hidden>
+  <div class="about-modal">
+    <div class="about-header">
+      <span class="about-title">ℹ️ ABOUT JUPYVENV</span>
+      <button class="about-close-btn" id="btn-about-close">✕</button>
+    </div>
+    <div class="about-body">
+      <div class="about-row"><span>Jupy Version</span><span id="about-jupy-version">—</span></div>
+      <div class="about-row"><span>Python (.jupy_env)</span><span id="about-python-version">—</span></div>
+      <div class="about-row"><span>Venv Directory</span><span id="about-venv-dir">—</span></div>
+      <div class="about-row"><span>Platform</span><span id="about-platform">—</span></div>
+      <div class="about-row"><span>Installed Packages</span><span id="about-package-count">—</span></div>
+    </div>
+  </div>
+</div>
+
 <!-- Templates -->
 <template id="cell-template">
   <div class="cell" tabindex="-1">
@@ -1806,6 +1883,7 @@ def make_ws_frame(message):
 <script type="module" src="js/app.js"></script>
 </body>
 </html>
+
 ```
 
 
@@ -1859,6 +1937,7 @@ html[data-theme="dark"] .cm-s-brutalism .cm-variable { color: #F9FAFB; }
   html:not([data-theme="light"]) .cm-s-brutalism .cm-builtin { color: #F9FAFB; }
   html:not([data-theme="light"]) .cm-s-brutalism .cm-variable { color: #F9FAFB; }
 }
+
 ```
 
 
@@ -1869,11 +1948,15 @@ html[data-theme="dark"] .cm-s-brutalism .cm-variable { color: #F9FAFB; }
 ```css
 @import "base/variables.css";
 @import "components/topbar.css";
+@import "components/runtime-menu.css";
 @import "components/cells.css";
 @import "components/terminal.css";
+@import "components/pip-manager.css";
 @import "components/editor.css";
 @import "components/system-bar.css";
+
 @import "components/shortcuts-dialog.css"; /* New Import */
+@import "components/about-modal.css";
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; }
@@ -1887,6 +1970,7 @@ body {
   display: flex;
   flex-direction: column;
 }
+
 ```
 
 
@@ -2106,6 +2190,7 @@ body {
   display: flex; gap: 12px; align-items: center;
 }
 kbd { background: var(--color-secondary); border: 1px solid var(--color-border); border-radius: 2px; padding: 1px 4px; font-family: var(--font-mono); font-size: 0.65rem; font-weight: 800; color: #111827; }
+
 ```
 
 
@@ -2156,6 +2241,113 @@ html[data-theme="dark"] {
     --color-shadow: #F9FAFB;
   }
 }
+
+```
+
+
+---
+
+# File: static\css\components\about-modal.css
+
+```css
+/* ==========================================================================
+   Jupy Brutalism Design System - About Jupyvenv Modal
+   ========================================================================== */
+
+.about-overlay[hidden] {
+  display: none !important;
+}
+
+.about-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.65);
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.about-modal {
+  width: 100%;
+  max-width: 420px;
+  background: var(--color-surface);
+  border: var(--border-thick);
+  border-radius: var(--rounded-md);
+  box-shadow: var(--shadow-brutal-lg);
+  overflow: hidden;
+  color: var(--color-text);
+}
+
+.about-header {
+  background: var(--color-primary);
+  padding: 10px 14px;
+  border-bottom: var(--border-thick);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.about-title {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: #FFFFFF;
+  letter-spacing: 0.05em;
+}
+
+.about-close-btn {
+  border: var(--border-thick);
+  background: var(--color-surface);
+  color: var(--color-text);
+  width: 24px;
+  height: 24px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-brutal-sm);
+}
+.about-close-btn:hover {
+  background: var(--color-secondary);
+  color: #111827;
+}
+
+.about-body {
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.about-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-bg-well);
+}
+.about-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.about-row span:first-child {
+  opacity: 0.6;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.about-row span:last-child {
+  font-weight: 800;
+  text-align: right;
+  word-break: break-word;
+}
+
 ```
 
 
@@ -2517,6 +2709,7 @@ html[data-theme="dark"] {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
 ```
 
 
@@ -2604,6 +2797,231 @@ html[data-theme="dark"] {
   color: #FFFFFF;
   letter-spacing: 0.03em;
 }
+
+```
+
+
+---
+
+# File: static\css\components\pip-manager.css
+
+```css
+/* ==========================================================================
+   Jupy Brutalism Design System - Pip Manager Left Slide Panel
+   ========================================================================== */
+
+.pip-manager-panel[hidden] {
+  display: none !important;
+}
+
+.pip-manager-panel {
+  width: 420px;
+  min-width: 320px;
+  max-width: 50vw;
+  background: var(--color-surface);
+  border-right: var(--border-thick);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.pip-manager-header {
+  padding: 6px 12px;
+  background: var(--color-primary);
+  border-bottom: var(--border-thick);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pip-manager-title {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #FFFFFF;
+  letter-spacing: 0.04em;
+}
+
+.pip-manager-install-row,
+.pip-manager-search-row {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: var(--border-thick);
+  flex-shrink: 0;
+}
+
+.pip-search-input {
+  flex: 1;
+  min-width: 0;
+  border: var(--border-thick);
+  border-radius: var(--rounded-sm);
+  background: var(--color-bg-well);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  padding: 6px 8px;
+}
+.pip-search-input:focus {
+  outline: none;
+  background: var(--color-surface);
+}
+
+.pip-manager-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.pip-manager-empty {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--color-text);
+  opacity: 0.55;
+  text-align: center;
+  padding: 28px 10px;
+}
+
+.pip-package-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--color-bg-well);
+}
+.pip-package-row:last-child {
+  border-bottom: none;
+}
+
+.pip-package-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.pip-package-version {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.pip-remove-btn {
+  flex-shrink: 0;
+}
+
+```
+
+
+---
+
+# File: static\css\components\runtime-menu.css
+
+```css
+/* ==========================================================================
+   Jupy Brutalism Design System - Runtime Dropdown Menu (Top-Left)
+   ========================================================================== */
+
+.menu-block { position: relative; }
+
+.runtime-menu { position: relative; }
+
+.runtime-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: var(--border-thick);
+  border-radius: var(--rounded-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  box-shadow: var(--shadow-brutal-sm);
+  user-select: none;
+}
+.runtime-menu-trigger:hover {
+  background: var(--color-secondary);
+  color: #111827;
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px var(--color-shadow);
+}
+.runtime-menu-caret {
+  font-size: 0.7rem;
+  transition: transform 0.1s ease;
+}
+.runtime-menu.open .runtime-menu-caret {
+  transform: rotate(180deg);
+}
+
+.runtime-menu-dropdown {
+  display: none;
+  flex-direction: column;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 280px;
+  background: var(--color-surface);
+  border: var(--border-thick);
+  border-radius: var(--rounded-sm);
+  box-shadow: var(--shadow-brutal-lg);
+  padding: 5px;
+  z-index: 300;
+}
+
+/* Opens on hover (mouse) or via the .open class toggled by runtimeMenu.js
+   (click, keyboard, touch) — see runtime/runtimeMenu.js. */
+.runtime-menu:hover .runtime-menu-dropdown,
+.runtime-menu.open .runtime-menu-dropdown {
+  display: flex;
+}
+
+.runtime-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border: none;
+  border-radius: var(--rounded-sm);
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  padding: 8px 10px;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.runtime-menu-item:hover {
+  background: var(--color-bg-well);
+}
+.runtime-menu-item:active {
+  background: var(--color-secondary);
+  color: #111827;
+}
+
+.runtime-menu-icon {
+  width: 1.2em;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.runtime-menu-divider {
+  height: 2px;
+  background: var(--color-border);
+  opacity: 0.15;
+  margin: 5px 4px;
+  flex-shrink: 0;
+}
+
 ```
 
 
@@ -2718,6 +3136,7 @@ html[data-theme="dark"] {
   background: var(--color-secondary);
   color: #111827;
 }
+
 ```
 
 
@@ -2803,6 +3222,7 @@ html[data-theme="dark"] {
   height: 14px;
   background: var(--color-border);
 }
+
 ```
 
 
@@ -2909,6 +3329,7 @@ html[data-theme="dark"] {
   height: 20vh;
   flex-shrink: 0;
 }
+
 ```
 
 
@@ -2949,6 +3370,7 @@ html[data-theme="dark"] {
 .btn-secondary { background: var(--color-surface); color: var(--color-text); }
 .btn-primary { background: var(--color-primary); color: #FFFFFF; }
 .btn-warning { background: var(--color-warning); color: #FFFFFF; }
+
 ```
 
 
@@ -2970,13 +3392,12 @@ html[data-theme="dark"] {
  * and the "+ CODE CELL" button at the bottom of the notebook, had no click
  * handlers at all. They're wired up below via notebook/notebookFile.js.
  *
- * ASSUMPTION: the compiled `js/` bundle this refactor was done from only
- * contained .js files, not index.html, so the exact ids of the Open/Save/
- * bottom-add-cell buttons weren't available. `btn-open`, `btn-save`, and
- * `btn-add-cell` below are a best guess following the existing `btn-*`
- * naming convention (btn-run-all, btn-theme-toggle, btn-terminal-toggle,
- * ...) — update these three `getElementById` calls if your index.html uses
- * different ids.
+ * BUG FIX: the bottom "+ CODE CELL" button was still dead after the above
+ * fix. It had been wired to `btn-add-cell`, a best guess made when this
+ * file was first migrated (the bundle available at the time had no
+ * index.html to check ids against). The real index.html has now been
+ * reviewed — the button's actual id is `btn-add-bottom` — so the lookup
+ * below is corrected. `btn-open` and `btn-save` were confirmed correct.
  */
 import { initTheme } from './theme/theme.js';
 import { initMetricsStream } from './metrics/metrics.js';
@@ -2987,6 +3408,9 @@ import { registerAutocomplete } from './autocomplete/autocomplete.js';
 import { initShortcuts } from './shortcuts/shortcuts.js';
 import { createNotebookController } from './notebook/notebookController.js';
 import { downloadNotebook, parseNotebookFile, readFileAsText } from './notebook/notebookFile.js';
+import { initRuntimeMenu } from './runtime/runtimeMenu.js';
+import { setupPipManager } from './pip/pipManager.js';
+import { setupAboutDialog } from './runtime/aboutDialog.js';
 
 (() => {
   const container = document.getElementById('notebook');
@@ -2994,7 +3418,7 @@ import { downloadNotebook, parseNotebookFile, readFileAsText } from './notebook/
   const fileInput = document.getElementById('file-input');
   const openBtn = document.getElementById('btn-open');
   const saveBtn = document.getElementById('btn-save');
-  const addCellBtn = document.getElementById('btn-add-cell');
+  const addCellBtn = document.getElementById('btn-add-bottom');
   const runAllBtn = document.getElementById('btn-run-all');
   const themeToggleBtn = document.getElementById('btn-theme-toggle');
   const toastContainer = document.getElementById('toast-container');
@@ -3006,6 +3430,20 @@ import { downloadNotebook, parseNotebookFile, readFileAsText } from './notebook/
   const terminalOutput = document.getElementById('terminal-output');
   const terminalInput = document.getElementById('terminal-input');
   const terminalPromptLabel = document.getElementById('terminal-prompt-label');
+
+  const runtimeMenu = document.getElementById('runtime-menu');
+  const runtimeMenuTrigger = document.getElementById('runtime-menu-trigger');
+  const runtimeMenuDropdown = document.getElementById('runtime-menu-dropdown');
+
+  const pipManagerPanel = document.getElementById('pip-manager-panel');
+  const pipManagerCloseBtn = document.getElementById('btn-pip-manager-close');
+  const pipManagerList = document.getElementById('pip-manager-list');
+  const pipSearchInput = document.getElementById('pip-search-input');
+  const pipInstallInput = document.getElementById('pip-install-input');
+  const pipInstallBtn = document.getElementById('btn-pip-install');
+
+  const aboutModal = document.getElementById('about-modal');
+  const aboutCloseBtn = document.getElementById('btn-about-close');
 
   const cellTemplate = document.getElementById('cell-template');
   const insertBarTemplate = document.getElementById('insert-bar-template');
@@ -3047,6 +3485,31 @@ import { downloadNotebook, parseNotebookFile, readFileAsText } from './notebook/
   );
 
   initShortcuts(notebook);
+
+  const pipManager = setupPipManager({
+    panel: pipManagerPanel,
+    closeBtn: pipManagerCloseBtn,
+    listEl: pipManagerList,
+    searchInput: pipSearchInput,
+    installInput: pipInstallInput,
+    installBtn: pipInstallBtn,
+    showToast,
+    onResize: () => setTimeout(() => notebook.refreshAllEditors(), 50),
+  });
+
+  const aboutDialog = setupAboutDialog({
+    overlay: aboutModal,
+    closeBtn: aboutCloseBtn,
+  });
+
+  initRuntimeMenu({
+    menu: runtimeMenu,
+    trigger: runtimeMenuTrigger,
+    dropdown: runtimeMenuDropdown,
+    notebook,
+    pipManager,
+    aboutDialog,
+  });
 
   runAllBtn.addEventListener('click', () => notebook.runAll());
 
@@ -3091,68 +3554,6 @@ import { downloadNotebook, parseNotebookFile, readFileAsText } from './notebook/
     'print("Press Ctrl + Shift + ? to view all keyboard shortcuts!")',
   ].join('\n'));
 })();
-```
-
-
----
-
-# File: static\js\filename.py
-
-```py
-import os
-import os
-from datetime import datetime
-
-def combine_files_to_markdown(output_filename="files.md"):
-    # Get the directory where the script is located
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    output_path = os.path.join(current_dir, output_filename)
-    
-    # Get total file count for the frontmatter metadata
-    total_files = 0
-    for root, dirs, files in os.walk(current_dir):
-        for file in files:
-            if os.path.join(root, file) != output_path:
-                total_files += 1
-
-    with open(output_path, "w", encoding="utf-8") as outfile:
-        # 1. Write YAML Frontmatter
-        outfile.write("---\n")
-        outfile.write(f"title: Folder Code Compilation\n")
-        outfile.write(f"date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        outfile.write(f"root_folder: \"{os.path.basename(current_dir)}\"\n")
-        outfile.write(f"total_compiled_files: {total_files}\n")
-        outfile.write("---\n\n")
-        
-        # 2. Walk through all directories and files
-        for root, dirs, files in os.walk(current_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                
-                # Skip the output file itself
-                if file_path == output_path:
-                    continue
-                    
-                relative_path = os.path.relpath(file_path, current_dir)
-                
-                # Write the file location header
-                outfile.write(f"# File: {relative_path}\n\n")
-                
-                try:
-                    with open(file_path, "r", encoding="utf-8", errors="replace") as infile:
-                        content = infile.read()
-                        outfile.write(content)
-                except Exception as e:
-                    outfile.write(f"*Error reading this file: {str(e)}*")
-                
-                # Add spacing between files
-                outfile.write("\n\n---\n\n")
-                
-    print(f"Successfully created {output_filename} with YAML frontmatter.")
-
-if __name__ == "__main__":
-    combine_files_to_markdown()
-
 
 ```
 
@@ -3300,6 +3701,7 @@ export function registerAutocomplete(cm) {
     }
   });
 }
+
 ```
 
 
@@ -3411,6 +3813,7 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
 
   return cell;
 }
+
 ```
 
 
@@ -3528,6 +3931,7 @@ export function appendCellStdinPrompt(cell, promptText, onSubmit) {
     input.focus();
   });
 }
+
 ```
 
 
@@ -3600,6 +4004,7 @@ export function toggleComment(cm) {
     }
   });
 }
+
 ```
 
 
@@ -3634,6 +4039,7 @@ export const MAX_TERMINAL_OUTPUT_CHARS = 200000;
 // and resets back to BASE the moment a connection succeeds.
 export const SOCKET_RECONNECT_BASE_MS = 1000;
 export const SOCKET_RECONNECT_MAX_MS = 10000;
+
 ```
 
 
@@ -3747,6 +4153,7 @@ export class ReconnectingSocket {
     this._ws?.close();
   }
 }
+
 ```
 
 
@@ -3780,6 +4187,7 @@ export function createToaster(container) {
     }, TOAST_VISIBLE_MS);
   };
 }
+
 ```
 
 
@@ -3828,6 +4236,7 @@ export function initMetricsStream() {
     },
   });
 }
+
 ```
 
 
@@ -4010,6 +4419,13 @@ export function createNotebookController({ container, templates, runSocket, show
 
     if (runningCellId === id) {
       showToast('⚠️ CELL ALREADY RUNNING', 'warning');
+      // Advance focus to the next cell even though we're not re-running it —
+      // matches the "queued" branch below. Without this, Shift+Enter on a
+      // cell that is itself still executing (a loop, sleep(), waiting on
+      // stdin, or just enough websocket latency to notice) leaves the
+      // selection stuck instead of moving down, which is the one case that
+      // looked like "Shift+Enter sometimes doesn't advance."
+      if (advance) advanceSelectionAfter(idx);
       return;
     }
 
@@ -4189,6 +4605,8 @@ export function createNotebookController({ container, templates, runSocket, show
     selectAdjacent,
     runCell,
     restartKernel,
+    restartAndRunAll,
+    restartAndRunToSelected,
     interruptKernel,
     runAll,
     loadNotebook,
@@ -4283,6 +4701,235 @@ export function readFileAsText(file) {
     reader.readAsText(file);
   });
 }
+
+```
+
+
+---
+
+# File: static\js\pip\pipManager.js
+
+```js
+/**
+ * pip/pipManager.js
+ * Left-hand slide-out panel for managing packages in .jupy_env — mirrors
+ * terminal/terminal.js's toggle-panel pattern, but on the left side.
+ *
+ * Lists installed packages (GET /api/pip/list, fetched lazily on first
+ * open), filters them client-side against the search box, and
+ * installs/uninstalls packages via the existing POST /api/pip/install and
+ * POST /api/pip/uninstall endpoints (server/handlers.py) — both of which
+ * already return the fresh package list, so the panel re-renders from the
+ * response instead of doing a second round-trip.
+ */
+export function setupPipManager({ panel, closeBtn, listEl, searchInput, installInput, installBtn, showToast, onResize }) {
+  let packages = [];
+  let loaded = false;
+  let busy = false;
+
+  function escapeHtml(s) {
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  function render() {
+    const query = searchInput.value.trim().toLowerCase();
+
+    if (!packages.length) {
+      listEl.innerHTML = `<div class="pip-manager-empty">${loaded ? 'No packages installed.' : 'Loading packages…'}</div>`;
+      return;
+    }
+
+    const filtered = query ? packages.filter((p) => p.name.toLowerCase().includes(query)) : packages;
+    if (!filtered.length) {
+      listEl.innerHTML = `<div class="pip-manager-empty">No packages match “${escapeHtml(searchInput.value.trim())}”.</div>`;
+      return;
+    }
+
+    listEl.innerHTML = '';
+    filtered.forEach((pkg) => {
+      const row = document.createElement('div');
+      row.className = 'pip-package-row';
+      row.innerHTML = `
+        <span class="pip-package-name">${escapeHtml(pkg.name)}</span>
+        <span class="pip-package-version">${escapeHtml(pkg.version)}</span>
+        <button class="action-btn action-danger pip-remove-btn" title="Uninstall ${escapeHtml(pkg.name)}">✕</button>
+      `;
+      row.querySelector('.pip-remove-btn').addEventListener('click', () => uninstall(pkg.name));
+      listEl.appendChild(row);
+    });
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch('/api/pip/list');
+      if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+      const data = await res.json();
+      packages = data.packages || [];
+      loaded = true;
+      render();
+    } catch (err) {
+      console.error('Failed to load package list:', err);
+      loaded = true;
+      listEl.innerHTML = '<div class="pip-manager-empty">⚠️ Failed to load package list.</div>';
+    }
+  }
+
+  async function install() {
+    const spec = installInput.value.trim();
+    if (!spec || busy) return;
+
+    busy = true;
+    installBtn.disabled = true;
+    installBtn.textContent = 'INSTALLING…';
+
+    try {
+      const res = await fetch('/api/pip/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: spec }),
+      });
+      const data = await res.json();
+      packages = data.packages || packages;
+      loaded = true;
+      render();
+
+      if (data.success) {
+        showToast(`📦 INSTALLED ${spec.toUpperCase()}`, 'success');
+        installInput.value = '';
+      } else {
+        showToast(`⚠️ FAILED TO INSTALL ${spec.toUpperCase()}`, 'danger');
+        console.error('pip install failed:', data.output);
+      }
+    } catch (err) {
+      console.error('Install request failed:', err);
+      showToast('⚠️ INSTALL REQUEST FAILED', 'danger');
+    } finally {
+      busy = false;
+      installBtn.disabled = false;
+      installBtn.textContent = 'INSTALL';
+    }
+  }
+
+  async function uninstall(name) {
+    if (busy) return;
+    busy = true;
+
+    try {
+      const res = await fetch('/api/pip/uninstall', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      packages = data.packages || packages;
+      loaded = true;
+      render();
+
+      if (data.success) {
+        showToast(`🗑️ REMOVED ${name.toUpperCase()}`, 'warning');
+      } else {
+        showToast(`⚠️ FAILED TO REMOVE ${name.toUpperCase()}`, 'danger');
+        console.error('pip uninstall failed:', data.output);
+      }
+    } catch (err) {
+      console.error('Uninstall request failed:', err);
+      showToast('⚠️ REMOVE REQUEST FAILED', 'danger');
+    } finally {
+      busy = false;
+    }
+  }
+
+  function open() {
+    panel.hidden = false;
+    if (!loaded) refresh();
+    if (onResize) onResize();
+    setTimeout(() => searchInput.focus(), 50);
+  }
+  function close() {
+    panel.hidden = true;
+    if (onResize) onResize();
+  }
+  function toggle() {
+    panel.hidden ? open() : close();
+  }
+
+  closeBtn.addEventListener('click', close);
+  searchInput.addEventListener('input', render);
+  installBtn.addEventListener('click', install);
+  installInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      install();
+    }
+  });
+
+  return { open, close, toggle };
+}
+
+```
+
+
+---
+
+# File: static\js\runtime\aboutDialog.js
+
+```js
+/**
+ * runtime/aboutDialog.js
+ * "About Jupyvenv" modal — fetches GET /api/about (server/handlers.py) and
+ * fills in the Jupy version, .jupy_env Python version, venv path,
+ * platform, and installed package count.
+ */
+export function setupAboutDialog({ overlay, closeBtn }) {
+  const fields = {
+    jupyVersion: document.getElementById('about-jupy-version'),
+    pythonVersion: document.getElementById('about-python-version'),
+    venvDir: document.getElementById('about-venv-dir'),
+    platform: document.getElementById('about-platform'),
+    packageCount: document.getElementById('about-package-count'),
+  };
+
+  function setAll(text) {
+    Object.values(fields).forEach((el) => {
+      if (el) el.textContent = text;
+    });
+  }
+
+  async function open() {
+    overlay.hidden = false;
+    setAll('…');
+    try {
+      const res = await fetch('/api/about');
+      if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+      const data = await res.json();
+      if (fields.jupyVersion) fields.jupyVersion.textContent = data.jupy_version ?? '—';
+      if (fields.pythonVersion) fields.pythonVersion.textContent = data.python_version ?? '—';
+      if (fields.venvDir) fields.venvDir.textContent = data.venv_dir ?? '—';
+      if (fields.platform) fields.platform.textContent = data.platform ?? '—';
+      if (fields.packageCount) fields.packageCount.textContent = data.package_count ?? '—';
+    } catch (err) {
+      console.error('Failed to load /api/about:', err);
+      setAll('⚠️ error');
+    }
+  }
+
+  function close() {
+    overlay.hidden = true;
+  }
+
+  closeBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !overlay.hidden) close();
+  });
+
+  return { open, close };
+}
+
 ```
 
 
@@ -4488,6 +5135,71 @@ export async function runCell(instance, code, { onStdout, onStderr, onPlot } = {
 
 export const restartKernel = async () => restart();
 export const isReady = () => !!pyodide;
+
+```
+
+
+---
+
+# File: static\js\runtime\runtimeMenu.js
+
+```js
+/**
+ * runtime/runtimeMenu.js
+ * Jupyter-style "RUNTIME" dropdown menu, top-left of the topbar next to the
+ * brand block. Opens on hover (via CSS, see components/runtime-menu.css)
+ * *or* on click (so it also works for touch/keyboard), and wires:
+ *   - Restart                              -> notebook.restartKernel()
+ *   - Restart and run all                  -> notebook.restartAndRunAll()
+ *   - Restart and run to selected cell     -> notebook.restartAndRunToSelected()
+ *   - Pip Manager                          -> opens the pip manager panel
+ *   - About Jupyvenv                       -> opens the about dialog
+ *
+ * The dropdown is shown/hidden via an `.open` class rather than the
+ * `hidden` attribute, so the CSS `:hover` rule and this module's click
+ * handling don't fight over the same mechanism.
+ */
+export function initRuntimeMenu({ menu, trigger, dropdown, notebook, pipManager, aboutDialog }) {
+  function open() {
+    menu.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
+  }
+  function close() {
+    menu.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+  }
+  function isOpen() {
+    return menu.classList.contains('open');
+  }
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    isOpen() ? close() : open();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (isOpen() && !menu.contains(e.target)) close();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isOpen()) close();
+  });
+
+  function bind(id, fn) {
+    const el = document.getElementById(id);
+    el?.addEventListener('click', () => {
+      close();
+      fn();
+    });
+  }
+
+  bind('runtime-restart', () => notebook.restartKernel());
+  bind('runtime-restart-run-all', () => notebook.restartAndRunAll());
+  bind('runtime-restart-run-selected', () => notebook.restartAndRunToSelected());
+  bind('runtime-pip-manager', () => pipManager.open());
+  bind('runtime-about', () => aboutDialog.open());
+}
+
 ```
 
 
@@ -4827,6 +5539,7 @@ function injectDialogDOM() {
     if (e.target === modal) toggleHelpDialog();
   });
 }
+
 ```
 
 
@@ -4927,6 +5640,7 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, output, input,
     }
   });
 }
+
 ```
 
 
@@ -4981,6 +5695,7 @@ export function initTheme(toggleBtn) {
 
   applyTheme();
 }
+
 ```
 
 

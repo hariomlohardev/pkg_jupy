@@ -60,6 +60,8 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
 
             else:
                 self.send_error(404, "Endpoint not found")
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            return
         except Exception as e:
             self._send_json({"success": False, "error": str(e)})
 
@@ -185,8 +187,13 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
 
     def _send_json(self, data):
         body = json.dumps(data).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            # Client dropped/aborted the request (e.g. autocomplete's AbortController
+            # cancelling a stale /api/complete call). Nothing to do — just don't crash.
+            pass
