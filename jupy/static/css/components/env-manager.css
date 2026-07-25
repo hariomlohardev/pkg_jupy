@@ -1,0 +1,211 @@
+/* ==========================================================================
+   Jupy Brutalism Design System - Environment Manager Left Slide Panel
+   (Env switcher + details + package manager, combined)
+   ========================================================================== */
+
+.env-manager-panel[hidden] { display: none !important; }
+
+.env-manager-panel {
+  width: 440px;
+  min-width: 340px;
+  max-width: 50vw;
+  background: var(--color-surface);
+  border-right: var(--border-thick);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.env-manager-header {
+  padding: 6px 12px;
+  background: var(--color-primary);
+  border-bottom: var(--border-thick);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.env-manager-title {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #FFFFFF;
+  letter-spacing: 0.04em;
+}
+
+.env-manager-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.env-section {
+  border: var(--border-thick);
+  border-radius: var(--rounded-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-brutal-sm);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.env-section-grow {
+  flex: 1;
+  min-height: 220px;
+}
+
+.env-section h3 {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: var(--color-primary);
+  border-bottom: 1px solid var(--color-bg-well);
+  padding-bottom: 6px;
+}
+
+.env-mode-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.env-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+
+.env-mode-option input[type="radio"] {
+  accent-color: var(--color-primary);
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.env-mode-option select {
+  margin-left: auto;
+  border: var(--border-thick);
+  border-radius: var(--rounded-sm);
+  background: var(--color-bg-well);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 3px 6px;
+  max-width: 140px;
+}
+.env-mode-option select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.env-create-row {
+  display: flex;
+  gap: 6px;
+}
+.env-create-row input {
+  flex: 1;
+  min-width: 0;
+  border: var(--border-thick);
+  border-radius: var(--rounded-sm);
+  background: var(--color-bg-well);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  padding: 6px 8px;
+}
+.env-create-row input:focus { outline: none; background: var(--color-surface); }
+
+.env-status-line {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  opacity: 0.75;
+  padding-top: 2px;
+}
+
+.about-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-bg-well);
+}
+.about-row:last-child { border-bottom: none; padding-bottom: 0; }
+.about-row span:first-child { opacity: 0.6; font-weight: 700; flex-shrink: 0; }
+.about-row span:last-child { font-weight: 800; text-align: right; word-break: break-word; }
+
+.pip-manager-install-row,
+.pip-manager-search-row {
+  display: flex;
+  gap: 6px;
+}
+
+.pip-search-input {
+  flex: 1;
+  min-width: 0;
+  border: var(--border-thick);
+  border-radius: var(--rounded-sm);
+  background: var(--color-bg-well);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  padding: 6px 8px;
+}
+.pip-search-input:focus { outline: none; background: var(--color-surface); }
+
+.pip-manager-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 100px;
+}
+
+.pip-manager-empty {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--color-text);
+  opacity: 0.55;
+  text-align: center;
+  padding: 20px 10px;
+}
+
+.pip-package-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--color-bg-well);
+}
+.pip-package-row:last-child { border-bottom: none; }
+
+.pip-package-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.pip-package-version {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  opacity: 0.6;
+  flex-shrink: 0;
+}

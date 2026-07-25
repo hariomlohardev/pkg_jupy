@@ -1,8 +1,7 @@
 import os
 import re
 import subprocess
-import sys
-from jupy.core.venv import VENV_BIN, VENV_DIR
+from jupy.core.kernel import kernel
 
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
@@ -11,21 +10,22 @@ def clean_text(text):
 
 
 class TerminalSession:
-    """Executes shell commands in .jupy_env with real-time output streaming and a clean yellow prompt."""
+    """Executes shell commands in the currently active Jupy environment with
+    real-time output streaming and a clean yellow prompt."""
     def __init__(self, ws_send_fn):
         self.ws_send_fn = ws_send_fn
         self.cwd = os.getcwd()
 
     def get_env(self):
         env = os.environ.copy()
-        env["VIRTUAL_ENV"] = VENV_DIR
-        env["PATH"] = VENV_BIN + os.path.pathsep + env.get("PATH", "")
+        env["VIRTUAL_ENV"] = kernel.env_info["path"]
+        env["PATH"] = kernel.env_info["bin"] + os.path.pathsep + env.get("PATH", "")
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         return env
 
     def get_prompt(self):
-        return "(jupy_venv) ❯"
+        return f"({kernel.env_info['name']}) ❯"
 
     def execute_cmd(self, cmd_str):
         cmd = cmd_str.strip()

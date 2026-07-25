@@ -1,11 +1,22 @@
+"""
+jupy/core/kernel.py
+Persistent Python Kernel Manager — one long-lived worker subprocess per
+notebook session, communicating over stdin/stdout with simple ASCII framing.
+
+Which interpreter backs the worker is now dynamic (see core/envmanager.py):
+by default it's a global env shared across projects, but the user can switch
+to a project-local `.jupy_env` or another named global env from the
+Environment panel — see switch_env() below, wired up via
+POST /api/env/select in server/handlers.py.
+"""
 import json
 import os
 import re
 import subprocess
 import sys
 import threading
-import time
-from jupy.core.venv import VENV_PYTHON
+
+from jupy.core import envmanager
 
 # Persistent Kernel Worker Process Script
 KERNEL_WORKER_SCRIPT = r"""
@@ -40,7 +51,7 @@ def _capture_plots():
     if "matplotlib.pyplot" in sys.modules:
         import matplotlib.pyplot as plt
         from matplotlib._pylab_helpers import Gcf
-        
+
         fignums = plt.get_fignums()
         for i in list(fignums):
             try:
@@ -56,7 +67,7 @@ def _capture_plots():
                         b64 = base64.b64encode(buf.read()).decode("ascii")
                         plots.append(f'<img class="notebook-plot" src="data:image/png;base64,{b64}" alt="Plot" />')
             except Exception: pass
-        
+
         try: plt.close("all")
         except Exception: pass
         try: Gcf.destroy_all()
@@ -173,10 +184,10 @@ while True:
             comps = _get_worker_completions(code, l_num, c_num)
             sys.stdout.write(f"---JUPY_COMPS:{json.dumps(comps)}---\n")
             sys.stdout.flush()
-        
+
         elif action == "execute":
             code = data.get("code", "")
-            
+
             try:
                 if "matplotlib" in sys.modules:
                     import matplotlib
@@ -237,13 +248,19 @@ def _force_kill_process(proc):
 
 
 class KernelManager:
-    """Persistent Python Kernel Manager with instant non-blocking process force-kill."""
+    """Persistent Python Kernel Manager with instant non-blocking process
+    force-kill and a switchable backing environment (see core/envmanager.py)."""
+
     def __init__(self):
         self.exec_count = 0
         self.proc = None
         self.lock = threading.Lock()
+        self.comm_lock = threading.Lock()  # guards ALL stdin/stdout traffic with the worker
+
+        self.env_info = envmanager.resolve_active_env(on_progress=print)
+        self.python = self.env_info["python"]
+
         self._ensure_kernel_proc()
-        self.comm_lock = threading.Lock()
 
     def _ensure_kernel_proc(self):
         with self.lock:
@@ -252,7 +269,7 @@ class KernelManager:
                 env["PYTHONUNBUFFERED"] = "1"
 
                 self.proc = subprocess.Popen(
-                    [VENV_PYTHON, "-u", "-c", KERNEL_WORKER_SCRIPT],
+                    [self.python, "-u", "-c", KERNEL_WORKER_SCRIPT],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -266,13 +283,15 @@ class KernelManager:
                         break
 
     def get_completions(self, code, line, col):
-        """Sends completion request into worker kernel. Never blocks a running cell."""
+        """Sends completion request into worker kernel. Never blocks a
+        running cell — returns [] immediately if the kernel is busy, exactly
+        like real Jupyter/Colab do."""
         proc = self.proc
         if proc is None or proc.poll() is not None:
             return []
 
         if not self.comm_lock.acquire(blocking=False):
-            return []  # kernel busy running a cell — skip instead of queueing/blocking
+            return []
 
         try:
             req = json.dumps({"action": "complete", "code": code, "line": line, "column": col}) + "\n"
@@ -286,6 +305,7 @@ class KernelManager:
                 line_str = proc.stdout.readline()
                 if not line_str:
                     break
+
                 if line_str.startswith("---JUPY_COMPS:"):
                     json_str = line_str.replace("---JUPY_COMPS:", "").strip()
                     if json_str.endswith("---"):
@@ -296,6 +316,7 @@ class KernelManager:
                         return []
                 elif "---JUPY_CELL_COMPLETE---" in line_str:
                     break
+
             return []
         finally:
             self.comm_lock.release()
@@ -312,13 +333,21 @@ class KernelManager:
         return self.force_interrupt()
 
     def restart(self):
-        """Restarts kernel process, wiping namespace state."""
+        """Restarts kernel process (same env), wiping namespace state."""
         proc = self.proc
         if proc:
             _force_kill_process(proc)
         self.proc = None
         self.exec_count = 0
         self._ensure_kernel_proc()
+
+    def switch_env(self, mode, name=None, on_progress=None):
+        """Persists a new env choice for this folder, ensures it exists
+        (creating it on first use), and restarts the kernel against it."""
+        self.env_info = envmanager.set_active_env(mode, name, on_progress=on_progress)
+        self.python = self.env_info["python"]
+        self.restart()
+        return self.env_info
 
     def handle_stdin_reply(self, value):
         proc = self.proc
@@ -347,8 +376,8 @@ class KernelManager:
                 py_lines.append(line)
 
         for cmd in pip_cmds:
-            ws_send_fn({"type": "stdout", "text": f"Installing {cmd} in .jupy_env...\n"})
-            p = subprocess.run([VENV_PYTHON, "-m", "pip", "install"] + cmd.split(), capture_output=True, text=True)
+            ws_send_fn({"type": "stdout", "text": f"Installing {cmd}...\n"})
+            p = subprocess.run([self.python, "-m", "pip", "install"] + cmd.split(), capture_output=True, text=True)
             if p.stdout: ws_send_fn({"type": "stdout", "text": p.stdout})
             if p.stderr: ws_send_fn({"type": "stderr", "text": p.stderr})
 
@@ -358,6 +387,7 @@ class KernelManager:
             return
 
         req = json.dumps({"action": "execute", "code": clean_code}) + "\n"
+
         with self.comm_lock:
             try:
                 current_proc.stdin.write(req)
@@ -373,22 +403,27 @@ class KernelManager:
 
             while current_proc:
                 line = current_proc.stdout.readline()
+
                 if not line:
                     if current_proc.poll() is not None:
                         ws_send_fn({"type": "stderr", "text": "\n⏹ Execution force stopped by user.\n"})
                     break
+
                 if line.startswith("---JUPY_STDIN_REQ:"):
                     prompt = line.replace("---JUPY_STDIN_REQ:", "").replace("---", "").strip()
                     ws_send_fn({"type": "stdin_request", "prompt": prompt})
                     continue
+
                 if "---JUPY_CELL_COMPLETE---" in line:
                     break
+
                 if "---JUPY_STDERR_START---" in line:
                     stderr_collecting = True
                     continue
                 if "---JUPY_STDERR_END---" in line:
                     stderr_collecting = False
                     continue
+
                 if "---JUPY_PLOTS_START---" in line:
                     plots_collecting = True
                     continue
@@ -398,6 +433,7 @@ class KernelManager:
                         ws_send_fn({"type": "plot", "html": p})
                     plot_lines = []
                     continue
+
                 if stderr_collecting:
                     ws_send_fn({"type": "stderr", "text": line})
                 elif plots_collecting:

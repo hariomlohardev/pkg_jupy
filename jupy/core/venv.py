@@ -1,64 +1,46 @@
+"""
+jupy/core/venv.py
+
+Pip package operations (list/install/uninstall/version) against a given
+Python interpreter path. Environment *location* and *selection* now lives in
+core/envmanager.py — this module just operates on whatever interpreter it's
+given, so it works the same whether that's the global default env, a
+project-local env, or a named env.
+"""
 import json
-import os
 import subprocess
-import sys
-import venv
 
-VENV_DIR = os.path.abspath(".jupy_env")
+from jupy.core.envmanager import JUPY_INTERNAL_PACKAGE_NAMES
 
 
-def ensure_virtualenv():
-    """Ensure isolated .jupy_env virtual environment exists with psutil & jedi."""
-    if not os.path.exists(VENV_DIR):
-        print(f"[Jupy] Creating isolated virtual environment at {VENV_DIR}...")
-        venv.create(VENV_DIR, with_pip=True)
-        print("[Jupy] Virtual environment ready.")
-
-    if sys.platform == "win32":
-        venv_python = os.path.join(VENV_DIR, "Scripts", "python.exe")
-        venv_bin = os.path.join(VENV_DIR, "Scripts")
-    else:
-        venv_python = os.path.join(VENV_DIR, "bin", "python")
-        venv_bin = os.path.join(VENV_DIR, "bin")
-
-    # Auto-install psutil and jedi
-    try:
-        subprocess.run([venv_python, "-c", "import psutil, jedi"], check=True, capture_output=True)
-    except Exception:
-        print("[Jupy] Installing core packages (psutil, jedi) into .jupy_env...")
-        subprocess.run([venv_python, "-m", "pip", "install", "psutil", "jedi"], capture_output=True)
-
-    return venv_python, venv_bin
-
-
-VENV_PYTHON, VENV_BIN = ensure_virtualenv()
-
-
-def list_packages():
-    """Returns installed packages in .jupy_env as [{"name": ..., "version": ...}, ...], sorted by name."""
+def list_packages(python):
+    """Returns installed packages for the given interpreter as
+    [{"name": ..., "version": ...}, ...], sorted by name, with Jupy's own
+    internal per-env packages (e.g. jedi) filtered out of the view."""
     try:
         result = subprocess.run(
-            [VENV_PYTHON, "-m", "pip", "list", "--format=json"],
+            [python, "-m", "pip", "list", "--format=json"],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
             return []
         packages = json.loads(result.stdout)
+        packages = [p for p in packages if p["name"].lower() not in JUPY_INTERNAL_PACKAGE_NAMES]
         packages.sort(key=lambda p: p["name"].lower())
         return packages
     except Exception:
-        return ['ss']
+        return []
 
 
-def install_package(spec):
-    """Installs a package (e.g. "requests" or "requests==2.32.0") into .jupy_env.
-    Returns (success: bool, output: str) — output is combined stdout+stderr from pip."""
+def install_package(python, spec):
+    """Installs a package (e.g. "requests" or "requests==2.32.0").
+    Returns (success: bool, output: str)."""
     spec = (spec or "").strip()
     if not spec:
         return False, "No package name given."
     try:
         result = subprocess.run(
-            [VENV_PYTHON, "-m", "pip", "install", spec],
+            [python, "-m", "pip", "install", spec],
             capture_output=True, text=True, timeout=300
         )
         output = (result.stdout or "") + (result.stderr or "")
@@ -69,14 +51,16 @@ def install_package(spec):
         return False, str(e)
 
 
-def uninstall_package(name):
-    """Uninstalls a package from .jupy_env. Returns (success: bool, output: str)."""
+def uninstall_package(python, name):
+    """Uninstalls a package. Returns (success: bool, output: str)."""
     name = (name or "").strip()
     if not name:
         return False, "No package name given."
+    if name.lower() in JUPY_INTERNAL_PACKAGE_NAMES:
+        return False, f"{name} is managed by Jupy and can't be removed here."
     try:
         result = subprocess.run(
-            [VENV_PYTHON, "-m", "pip", "uninstall", "-y", name],
+            [python, "-m", "pip", "uninstall", "-y", name],
             capture_output=True, text=True, timeout=60
         )
         output = (result.stdout or "") + (result.stderr or "")
@@ -87,10 +71,10 @@ def uninstall_package(name):
         return False, str(e)
 
 
-def get_python_version():
-    """Returns the .jupy_env interpreter's version string, e.g. 'Python 3.11.6'."""
+def get_python_version(python):
+    """Returns the interpreter's version string, e.g. 'Python 3.11.6'."""
     try:
-        result = subprocess.run([VENV_PYTHON, "--version"], capture_output=True, text=True, timeout=5)
+        result = subprocess.run([python, "--version"], capture_output=True, text=True, timeout=5)
         return (result.stdout or result.stderr or "").strip()
     except Exception:
         return "unknown"

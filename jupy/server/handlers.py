@@ -5,17 +5,11 @@ import threading
 import time
 from http.server import SimpleHTTPRequestHandler
 from jupy import __version__ as JUPY_VERSION
-from jupy.core.autocomplete import get_completions
+from jupy.core import envmanager
 from jupy.core.kernel import kernel
 from jupy.core.metrics import get_system_metrics
 from jupy.core.terminal import TerminalSession
-from jupy.core.venv import (
-    VENV_DIR,
-    get_python_version,
-    install_package,
-    list_packages,
-    uninstall_package,
-)
+from jupy.core.venv import get_python_version, install_package, list_packages, uninstall_package
 from jupy.server.protocol import make_ws_accept, make_ws_frame, parse_ws_frame
 
 STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
@@ -35,28 +29,52 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 code = data.get("code", "")
                 line = data.get("line", 1)
                 col = data.get("column", 0)
-
                 comps = kernel.get_completions(code, line, col)
                 self._send_json({"completions": comps})
 
             elif self.path == "/api/restart":
-                # BUG FIX: the frontend has always called this endpoint to restart the
-                # kernel (see notebook/notebookController.js), but it never had a route
-                # here — every restart request silently 404'd.
                 kernel.restart()
                 self._send_json({"status": "restarted", "exec_count": kernel.exec_count})
 
             elif self.path == "/api/pip/install":
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 name = data.get("name", "")
-                success, output = install_package(name)
-                self._send_json({"success": success, "output": output, "packages": list_packages()})
+                success, output = install_package(kernel.python, name)
+                self._send_json({"success": success, "output": output, "packages": list_packages(kernel.python)})
 
             elif self.path == "/api/pip/uninstall":
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 name = data.get("name", "")
-                success, output = uninstall_package(name)
-                self._send_json({"success": success, "output": output, "packages": list_packages()})
+                success, output = uninstall_package(kernel.python, name)
+                self._send_json({"success": success, "output": output, "packages": list_packages(kernel.python)})
+
+            elif self.path == "/api/env/select":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                mode = data.get("mode", "global")
+                name = data.get("name")
+                try:
+                    info = kernel.switch_env(mode, name)
+                    self._send_json({"success": True, "current": self._env_payload(info)})
+                except Exception as e:
+                    self._send_json({"success": False, "error": str(e)})
+
+            elif self.path == "/api/env/create":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                name = (data.get("name") or "").strip()
+                if not name:
+                    self._send_json({"success": False, "error": "No environment name given."})
+                else:
+                    try:
+                        envmanager.ensure_env(envmanager.get_global_env_path(name))
+                        self._send_json({"success": True, "global_envs": envmanager.list_global_envs()})
+                    except Exception as e:
+                        self._send_json({"success": False, "error": str(e)})
+
+            elif self.path == "/api/env/delete":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                name = (data.get("name") or "").strip()
+                success, error = envmanager.delete_global_env(name)
+                self._send_json({"success": success, "error": error, "global_envs": envmanager.list_global_envs()})
 
             else:
                 self.send_error(404, "Endpoint not found")
@@ -83,28 +101,34 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
             elif self.path == "/ws/metrics":
                 self.handle_metrics_ws()
             return
-        
 
         elif self.path == "/api/status":
-            self._send_json({"status": "ready", "exec_count": kernel.exec_count, "venv": VENV_DIR})
-            
+            self._send_json({"status": "ready", "exec_count": kernel.exec_count, "venv": kernel.env_info["path"]})
 
         elif self.path == "/api/pip/list":
-            self._send_json({"packages": list_packages()})
+            self._send_json({"packages": list_packages(kernel.python)})
 
-
-        elif self.path == "/api/about":
-            packages = list_packages()
+        elif self.path == "/api/env/list":
             self._send_json({
+                "current": self._env_payload(kernel.env_info),
+                "global_envs": envmanager.list_global_envs(),
                 "jupy_version": JUPY_VERSION,
-                "python_version": get_python_version(),
-                "venv_dir": VENV_DIR,
                 "platform": platform.platform(),
-                "package_count": len(packages),
+                "data_dir": envmanager.get_data_dir(),
             })
 
         else:
             super().do_GET()
+
+    def _env_payload(self, info):
+        return {
+            "mode": info["mode"],
+            "name": info["name"],
+            "path": info["path"],
+            "label": info["label"],
+            "python_version": get_python_version(info["python"]),
+            "package_count": len(list_packages(info["python"])),
+        }
 
     def handle_metrics_ws(self):
         """Streams 5-second moving average hardware usage every 5 seconds over WebSocket."""
@@ -118,7 +142,7 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                     with ws_lock:
                         self.wfile.write(frame)
                         self.wfile.flush()
-                    time.sleep(5.0)  # Updated: Exactly 5 seconds between updates
+                    time.sleep(5.0)
                 except Exception:
                     break
 
@@ -194,6 +218,4 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
-            # Client dropped/aborted the request (e.g. autocomplete's AbortController
-            # cancelling a stale /api/complete call). Nothing to do — just don't crash.
             pass

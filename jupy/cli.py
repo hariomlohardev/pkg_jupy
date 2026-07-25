@@ -2,7 +2,6 @@ import argparse
 import socketserver
 import sys
 import webbrowser
-from jupy.server.handlers import JupyHTTPHandler
 
 
 class ThreadingServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -15,6 +14,15 @@ def main():
     parser.add_argument("--port", type=int, default=8000, help="Port to run server on (default: 8000)")
     parser.add_argument("--no-browser", action="store_true", help="Do not automatically open browser")
     args = parser.parse_args()
+
+    # Ensure Jupy's own server-side dependencies (psutil) exist in *this*
+    # interpreter — the one running `jupy` itself — before anything else is
+    # imported. Must happen before core/metrics.py (imported transitively via
+    # server/handlers.py below) does its top-level `import psutil`.
+    from jupy.core.envmanager import ensure_jupy_dependencies
+    ensure_jupy_dependencies()
+
+    from jupy.server.handlers import JupyHTTPHandler
 
     url = f"http://localhost:{args.port}"
     print(f"\n  ┌───────────────────────────────────────────────────┐")

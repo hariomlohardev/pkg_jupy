@@ -5,24 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Untitled.ipynb — Jupy</title>
 
-<!-- Fonts -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Darker+Grotesque:wght@500;700;800;900&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
 
-<!-- CodeMirror Core & Autocomplete Addons -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css" />
 
-<!-- Modular CSS Modules Entry Point -->
 <link rel="stylesheet" href="css/main.css" />
 </head>
 <body>
 
-<!-- Bottom-Left Toast Notifications Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<!-- Brutalist Topbar Header -->
 <header class="topbar">
   <div class="brand-block">
     <img src="logo.png" alt="Jupy" class="logo-img" onerror="this.style.display='none'" />
@@ -46,11 +41,8 @@
           <span class="runtime-menu-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg></span> Restart and run to selected cell
         </button>
         <div class="runtime-menu-divider"></div>
-        <button class="runtime-menu-item" id="runtime-pip-manager" role="menuitem">
-          <span class="runtime-menu-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></span> Pip Manager
-        </button>
-        <button class="runtime-menu-item" id="runtime-about" role="menuitem">
-          <span class="runtime-menu-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span> About Jupyvenv
+        <button class="runtime-menu-item" id="runtime-environment" role="menuitem">
+          <span class="runtime-menu-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></span> Environment
         </button>
       </div>
     </div>
@@ -62,7 +54,7 @@
     </div>
     <span class="status" id="status">
       <span class="status-indicator"></span>
-      ENV: .JUPY_ENV READY
+      <span id="env-status-label">ENV: READY</span>
     </span>
   </div>
 
@@ -78,27 +70,66 @@
   </div>
 </header>
 
-<!-- Main Workspace Split Container -->
 <div class="app-workspace" id="app-workspace">
-  <!-- Far-Left Split Pip Manager (Hidden by Default) -->
-  <aside class="pip-manager-panel" id="pip-manager-panel" hidden>
-    <div class="pip-manager-header">
-      <span class="pip-manager-title">📦 PIP MANAGER (.jupy_env)</span>
-      <button class="action-btn action-danger" id="btn-pip-manager-close" title="Close Pip Manager">✕</button>
+  <!-- Far-Left Split Environment Manager (Hidden by Default) -->
+  <aside class="env-manager-panel" id="env-manager-panel" hidden>
+    <div class="env-manager-header">
+      <span class="env-manager-title">📦 ENVIRONMENT</span>
+      <button class="action-btn action-danger" id="btn-env-manager-close" title="Close">✕</button>
     </div>
-    <div class="pip-manager-install-row">
-      <input type="text" id="pip-install-input" class="pip-search-input" placeholder="package name, e.g. requests==2.32.0" autocomplete="off" spellcheck="false" />
-      <button class="btn btn-primary" id="btn-pip-install">INSTALL</button>
-    </div>
-    <div class="pip-manager-search-row">
-      <input type="text" id="pip-search-input" class="pip-search-input" placeholder="🔍 search installed packages…" autocomplete="off" spellcheck="false" />
-    </div>
-    <div class="pip-manager-list" id="pip-manager-list">
-      <div class="pip-manager-empty">Loading packages…</div>
+    <div class="env-manager-body">
+
+      <section class="env-section">
+        <h3>ACTIVE ENVIRONMENT</h3>
+        <div class="env-mode-options">
+          <label class="env-mode-option">
+            <input type="radio" name="env-mode" value="global" />
+            <span>Global Default</span>
+          </label>
+          <label class="env-mode-option">
+            <input type="radio" name="env-mode" value="named" />
+            <span>Named Global Env</span>
+            <select id="env-named-select"></select>
+          </label>
+          <label class="env-mode-option">
+            <input type="radio" name="env-mode" value="project" />
+            <span>This Folder Only (.jupy_env)</span>
+          </label>
+        </div>
+        <div class="env-create-row">
+          <input type="text" id="env-create-input" placeholder="new environment name" autocomplete="off" spellcheck="false" />
+          <button class="btn btn-secondary" id="btn-env-create">+ NEW</button>
+        </div>
+        <button class="btn btn-primary" id="btn-env-apply">SWITCH ENVIRONMENT</button>
+        <div class="env-status-line" id="env-status-line"></div>
+      </section>
+
+      <section class="env-section">
+        <h3>DETAILS</h3>
+        <div class="about-row"><span>Jupy Version</span><span id="env-jupy-version">—</span></div>
+        <div class="about-row"><span>Python</span><span id="env-python-version">—</span></div>
+        <div class="about-row"><span>Env Path</span><span id="env-path">—</span></div>
+        <div class="about-row"><span>Platform</span><span id="env-platform">—</span></div>
+        <div class="about-row"><span>Packages</span><span id="env-package-count">—</span></div>
+      </section>
+
+      <section class="env-section env-section-grow">
+        <h3>PACKAGES</h3>
+        <div class="pip-manager-install-row">
+          <input type="text" id="pip-install-input" class="pip-search-input" placeholder="package name, e.g. requests==2.32.0" autocomplete="off" spellcheck="false" />
+          <button class="btn btn-primary" id="btn-pip-install">INSTALL</button>
+        </div>
+        <div class="pip-manager-search-row">
+          <input type="text" id="pip-search-input" class="pip-search-input" placeholder="🔍 search installed packages…" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="pip-manager-list" id="pip-manager-list">
+          <div class="pip-manager-empty">Loading packages…</div>
+        </div>
+      </section>
+
     </div>
   </aside>
 
-  <!-- Left Side: Notebook Cells -->
   <div class="notebook-panel">
     <main class="notebook" id="notebook"></main>
     <div class="add-cell-bottom">
@@ -106,16 +137,15 @@
     </div>
   </div>
 
-  <!-- Right Side Split Terminal (Hidden by Default) -->
   <aside class="terminal-panel" id="terminal-panel" hidden>
     <div class="terminal-header">
-      <span class="terminal-title">📟 TERMINAL (jupy_venv)</span>
+      <span class="terminal-title">📟 TERMINAL</span>
       <button class="action-btn action-danger" id="btn-terminal-close" title="Close Terminal">✕</button>
     </div>
     <div class="terminal-screen" id="terminal-screen">
       <pre class="terminal-output" id="terminal-output"></pre>
       <div class="terminal-input-line">
-        <span class="terminal-prompt" id="terminal-prompt-label">(jupy_venv) ❯</span>
+        <span class="terminal-prompt" id="terminal-prompt-label">❯</span>
         <input type="text" id="terminal-input" class="terminal-input" autocomplete="off" spellcheck="false" placeholder="type command..." />
       </div>
       <div class="terminal-bottom-spacer"></div>
@@ -123,7 +153,6 @@
   </aside>
 </div>
 
-<!-- Real-Time System Resource Monitor Footer Bar -->
 <footer class="system-bar-wrapper">
   <div class="system-bar" id="system-bar">
     <div class="sys-item">
@@ -131,17 +160,13 @@
       <div class="sys-bar-track"><div class="sys-bar-fill" id="cpu-bar-fill" style="width: 0%;"></div></div>
       <span class="sys-val" id="cpu-val">0%</span>
     </div>
-
     <div class="sys-divider"></div>
-
     <div class="sys-item">
       <span class="sys-label">RAM</span>
       <div class="sys-bar-track"><div class="sys-bar-fill" id="ram-bar-fill" style="width: 0%;"></div></div>
       <span class="sys-val" id="ram-val">0/0 GB (0%)</span>
     </div>
-
     <div class="sys-divider"></div>
-
     <div class="sys-item">
       <span class="sys-label">GPU</span>
       <div class="sys-bar-track"><div class="sys-bar-fill warning" id="gpu-bar-fill" style="width: 0%;"></div></div>
@@ -150,24 +175,6 @@
   </div>
 </footer>
 
-<!-- About Jupyvenv Modal -->
-<div class="about-overlay" id="about-modal" hidden>
-  <div class="about-modal">
-    <div class="about-header">
-      <span class="about-title">ℹ️ ABOUT JUPYVENV</span>
-      <button class="about-close-btn" id="btn-about-close">✕</button>
-    </div>
-    <div class="about-body">
-      <div class="about-row"><span>Jupy Version</span><span id="about-jupy-version">—</span></div>
-      <div class="about-row"><span>Python (.jupy_env)</span><span id="about-python-version">—</span></div>
-      <div class="about-row"><span>Venv Directory</span><span id="about-venv-dir">—</span></div>
-      <div class="about-row"><span>Platform</span><span id="about-platform">—</span></div>
-      <div class="about-row"><span>Installed Packages</span><span id="about-package-count">—</span></div>
-    </div>
-  </div>
-</div>
-
-<!-- Templates -->
 <template id="cell-template">
   <div class="cell" tabindex="-1">
     <div class="cell-gutter">
@@ -193,11 +200,9 @@
   </div>
 </template>
 
-<!-- Scripts -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
-<!-- CodeMirror closebrackets Addon Script -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
