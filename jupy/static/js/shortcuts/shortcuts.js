@@ -1,12 +1,20 @@
 /**
- * shortcuts.js
- * Hotkeys manager implementing native Brutalist stylesheet injection.
+ * shortcuts/shortcuts.js
+ * Global command-mode keyboard shortcuts, plus the "⌨️ Keyboard Shortcuts"
+ * help dialog (Ctrl/Cmd+Shift+? or +/).
+ *
+ * CLEANUP: Up/Down/K/J navigation used to re-derive "clamp to the cell list
+ * bounds" locally, duplicating logic that also lives in
+ * notebook/notebookController.js#selectAdjacent. Now it just calls
+ * actions.selectAdjacent(-1|1) so the bounds-check exists in exactly one
+ * place.
  */
+import { DOUBLE_TAP_WINDOW_MS } from '../config/constants.js';
 
-let lastDeletedCellSource = "";
+let lastDeletedCellSource = '';
 
 export function initShortcuts(actions) {
-  // Inject Brutalist Dialog HTML and Inline CSS into the document
+  // Inject Brutalist Dialog HTML and inline CSS into the document.
   injectDialogDOM();
 
   let lastDPress = 0;
@@ -17,9 +25,9 @@ export function initShortcuts(actions) {
     const isEditing = actions.getEditingId() !== null;
     const activeEl = document.activeElement;
 
-    // Ignore if typing inside inputs or non-editor textareas
+    // Ignore if typing inside inputs or non-editor textareas.
     if (
-      activeEl.tagName === 'INPUT' || 
+      activeEl.tagName === 'INPUT' ||
       (activeEl.tagName === 'TEXTAREA' && !activeEl.classList.contains('CodeMirror-code') && activeEl.id !== 'terminal-hidden-input')
     ) {
       return;
@@ -45,7 +53,7 @@ export function initShortcuts(actions) {
     if (!selectedId) return;
 
     const cells = actions.getCells();
-    const idx = cells.findIndex(c => c.id === selectedId);
+    const idx = cells.findIndex((c) => c.id === selectedId);
 
     // Execution Controls
     if (e.key === 'Enter' && e.shiftKey) {
@@ -73,15 +81,15 @@ export function initShortcuts(actions) {
 
     const k = e.key.toLowerCase();
 
-    // Navigation
+    // Navigation — bounds-clamping lives in notebookController#selectAdjacent.
     if (e.key === 'ArrowUp' || k === 'k') {
       e.preventDefault();
-      if (idx > 0) actions.selectCell(cells[idx - 1].id);
+      actions.selectAdjacent(-1);
       return;
     }
     if (e.key === 'ArrowDown' || k === 'j') {
       e.preventDefault();
-      if (idx < cells.length - 1) actions.selectCell(cells[idx + 1].id);
+      actions.selectAdjacent(1);
       return;
     }
 
@@ -101,14 +109,14 @@ export function initShortcuts(actions) {
     if (k === 'd') {
       e.preventDefault();
       const now = Date.now();
-      if (now - lastDPress < 600) {
+      if (now - lastDPress < DOUBLE_TAP_WINDOW_MS) {
         const cell = cells[idx];
         if (cell) lastDeletedCellSource = cell.cm.getValue();
         actions.deleteCell(selectedId);
         lastDPress = 0;
       } else {
         lastDPress = now;
-        setTimeout(() => { lastDPress = 0; }, 600);
+        setTimeout(() => { lastDPress = 0; }, DOUBLE_TAP_WINDOW_MS);
       }
       return;
     }
@@ -118,7 +126,7 @@ export function initShortcuts(actions) {
       e.preventDefault();
       if (lastDeletedCellSource) {
         actions.insertCellAt(idx, lastDeletedCellSource, { focus: false });
-        lastDeletedCellSource = "";
+        lastDeletedCellSource = '';
       }
       return;
     }
@@ -139,12 +147,12 @@ export function initShortcuts(actions) {
     if (k === 'i') {
       e.preventDefault();
       const now = Date.now();
-      if (now - lastIPress < 600) {
+      if (now - lastIPress < DOUBLE_TAP_WINDOW_MS) {
         actions.interruptKernel();
         lastIPress = 0;
       } else {
         lastIPress = now;
-        setTimeout(() => { lastIPress = 0; }, 600);
+        setTimeout(() => { lastIPress = 0; }, DOUBLE_TAP_WINDOW_MS);
       }
       return;
     }
@@ -153,12 +161,12 @@ export function initShortcuts(actions) {
     if (k === '0') {
       e.preventDefault();
       const now = Date.now();
-      if (now - lastZeroPress < 600) {
+      if (now - lastZeroPress < DOUBLE_TAP_WINDOW_MS) {
         actions.restartKernel();
         lastZeroPress = 0;
       } else {
         lastZeroPress = now;
-        setTimeout(() => { lastZeroPress = 0; }, 600);
+        setTimeout(() => { lastZeroPress = 0; }, DOUBLE_TAP_WINDOW_MS);
       }
       return;
     }
@@ -175,7 +183,7 @@ export function toggleHelpDialog() {
 function injectDialogDOM() {
   if (document.getElementById('jupy-help-dialog')) return;
 
-  // 1. Inject Styles directly into head to prevent loading errors
+  // 1. Inject styles directly into head to prevent loading errors.
   const style = document.createElement('style');
   style.textContent = `
     .shortcuts-overlay {
@@ -272,7 +280,7 @@ function injectDialogDOM() {
   `;
   document.head.appendChild(style);
 
-  // 2. Inject Modal DOM
+  // 2. Inject modal DOM.
   const modal = document.createElement('div');
   modal.id = 'jupy-help-dialog';
   modal.className = 'shortcuts-overlay';

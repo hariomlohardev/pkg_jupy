@@ -1,16 +1,25 @@
 /**
- * pyodide-runtime.js
- * Pyodide execution wrapper supporting !pip install & Matplotlib plot capturing
+ * runtime/pyodideRuntime.js
+ * Client-side (in-browser) Python execution via Pyodide — supports
+ * `!pip install` and captures Matplotlib plots as inline <img> output.
+ *
+ * FLAG FOR REVIEW: this module isn't imported anywhere, and it wasn't wired
+ * into the old static/js/notebook.js either — live cell execution goes
+ * through the backend kernel over the `/ws/run` WebSocket instead (see
+ * notebook/notebookController.js#runCell). It's migrated here unchanged so
+ * nothing is silently dropped, but as far as this codebase shows, it's dead
+ * code from an earlier or alternate (offline/serverless) execution path.
+ * Worth a decision: wire it up as a fallback/offline mode, or delete it.
  */
-const PyRuntime = (() => {
-  const PYODIDE_VERSION = "v0.26.4";
-  const PYODIDE_CDN = `https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/`;
+const PYODIDE_VERSION = 'v0.26.4';
+const PYODIDE_CDN = `https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/`;
 
-  let pyodide = null;
-  let loadingPromise = null;
-  let runCellFn = null;
+let pyodide = null;
+let loadingPromise = null;
+let runCellFn = null;
+let namespace = null;
 
-  const BOOTSTRAP_PY = `
+const BOOTSTRAP_PY = `
 import ast, io, re, sys, traceback, warnings
 from contextlib import redirect_stdout, redirect_stderr
 
@@ -122,64 +131,67 @@ async def __pynb_run_cell__(code, ns):
     return out.getvalue(), err.getvalue(), result_repr, error_tb, plots
 `;
 
-  function freshNamespace() {
-    return pyodide.runPython("{'__name__': '__main__'}");
-  }
+function freshNamespace() {
+  return pyodide.runPython("{'__name__': '__main__'}");
+}
 
-  let namespace = null;
+async function init(onProgress) {
+  if (pyodide) return pyodide;
+  if (loadingPromise) return loadingPromise;
 
-  async function init(onProgress) {
-    if (pyodide) return pyodide;
-    if (loadingPromise) return loadingPromise;
+  loadingPromise = (async () => {
+    onProgress?.('Fetching Python runtime…');
+    const { loadPyodide } = await import(PYODIDE_CDN + 'pyodide.mjs');
+    pyodide = await loadPyodide({ indexURL: PYODIDE_CDN });
 
-    loadingPromise = (async () => {
-      onProgress?.("Fetching Python runtime…");
-      const { loadPyodide } = await import(PYODIDE_CDN + "pyodide.mjs");
-      pyodide = await loadPyodide({ indexURL: PYODIDE_CDN });
+    onProgress?.('Loading package installer (micropip)…');
+    await pyodide.loadPackage('micropip');
 
-      onProgress?.("Loading package installer (micropip)…");
-      await pyodide.loadPackage("micropip");
-
-      onProgress?.("Initializing kernel…");
-      pyodide.runPython(BOOTSTRAP_PY);
-      runCellFn = pyodide.globals.get("__pynb_run_cell__");
-      namespace = freshNamespace();
-
-      onProgress?.("Ready");
-      return pyodide;
-    })();
-
-    return loadingPromise;
-  }
-
-  async function run(code) {
-    if (!pyodide || !runCellFn) throw new Error("PyRuntime not ready");
-    const proxy = await runCellFn(code, namespace);
-    const [stdout, stderr, result, error, plots] = proxy.toJs();
-    proxy.destroy();
-    return { stdout, stderr, result, error, plots };
-  }
-
-  function restart() {
-    if (namespace && namespace.destroy) {
-      try { namespace.destroy(); } catch (e) {}
-    }
+    onProgress?.('Initializing kernel…');
+    pyodide.runPython(BOOTSTRAP_PY);
+    runCellFn = pyodide.globals.get('__pynb_run_cell__');
     namespace = freshNamespace();
-  }
 
-  return {
-    getPyodide: (onProgress) => init(onProgress),
-    runCell: async (instance, code, { onStdout, onStderr, onPlot } = {}) => {
-      const { stdout, stderr, result, error, plots } = await run(code);
-      if (stdout) onStdout?.(stdout.replace(/\n$/, ""));
-      if (result != null) onStdout?.(result);
-      if (plots && plots.length > 0) {
-        plots.forEach((html) => onPlot?.(html));
-      }
-      if (stderr) onStderr?.(stderr.replace(/\n$/, ""));
-      if (error) onStderr?.(error.replace(/\n$/, ""));
-    },
-    restartKernel: async () => restart(),
-    isReady: () => !!pyodide,
-  };
-})();
+    onProgress?.('Ready');
+    return pyodide;
+  })();
+
+  return loadingPromise;
+}
+
+async function run(code) {
+  if (!pyodide || !runCellFn) throw new Error('PyRuntime not ready');
+  const proxy = await runCellFn(code, namespace);
+  const [stdout, stderr, result, error, plots] = proxy.toJs();
+  proxy.destroy();
+  return { stdout, stderr, result, error, plots };
+}
+
+function restart() {
+  if (namespace && namespace.destroy) {
+    try { namespace.destroy(); } catch { /* already gone */ }
+  }
+  namespace = freshNamespace();
+}
+
+/** Loads (once) and returns the Pyodide instance, reporting progress via onProgress. */
+export const getPyodide = (onProgress) => init(onProgress);
+
+/**
+ * @param {*} instance - unused; kept for call-signature parity with the backend run path
+ * @param {string} code
+ * @param {{onStdout?: (text: string) => void, onStderr?: (text: string) => void, onPlot?: (html: string) => void}} [callbacks]
+ */
+export async function runCell(instance, code, { onStdout, onStderr, onPlot } = {}) {
+  const { stdout, stderr, result, error, plots } = await run(code);
+  if (stdout) onStdout?.(stdout.replace(/\n$/, ''));
+  if (result != null) onStdout?.(result);
+  if (plots && plots.length > 0) {
+    plots.forEach((html) => onPlot?.(html));
+  }
+  if (stderr) onStderr?.(stderr.replace(/\n$/, ''));
+  if (error) onStderr?.(error.replace(/\n$/, ''));
+}
+
+export const restartKernel = async () => restart();
+export const isReady = () => !!pyodide;
