@@ -1,3 +1,7 @@
+/**
+ * notebook/execution.js
+ * Cell execution, queue, message handling, status.
+ */
 import {
   clearCellOutput,
   appendCellOutput,
@@ -12,7 +16,12 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
 
   function executeNextInQueue(id) {
     const cell = getCell(id);
-    if (!cell) return;
+    if (!cell) {
+      console.warn('[Jupy] executeNextInQueue: cell not found', id);
+      state.runningCellId = null;
+      setStatus('idle');
+      return;
+    }
     state.runningCellId = id;
     cell.dom.root.classList.remove('queued');
     cell.dom.root.classList.add('running');
@@ -20,10 +29,21 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
     cell.dom.runBtn.title = 'Interrupt Execution';
     cell.dom.execCountEl.textContent = '[*]';
     clearCellOutput(cell);
-    runSocket.send({ action: 'run', code: cell.cm.getValue() });
+    const language = cell.language || 'python';
+    console.log('[Jupy] Executing cell', id, 'language:', language);
+    runSocket.send({
+      action: 'run',
+      code: cell.cm.getValue(),
+      language: language,
+    });
   }
 
   function advanceSelectionAfter(idx) {
+    // Safety check: if operations is null, log and return
+    if (!operations) {
+      console.error('[Jupy] advanceSelectionAfter: operations is null!');
+      return;
+    }
     if (idx === cells.length - 1) {
       operations.insertCellAt(idx + 1, '', { focus: true });
     } else {
@@ -36,8 +56,12 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
   }
 
   function runCell(id, { advance = false, insertBelow = false } = {}) {
+    console.log('[Jupy] runCell called', id, { advance, insertBelow });
     const cell = getCell(id);
-    if (!cell) return;
+    if (!cell) {
+      console.warn('[Jupy] runCell: cell not found', id);
+      return;
+    }
     if (!runSocket.isOpen) {
       showToast('⚠️ NOT CONNECTED TO KERNEL — RECONNECTING…', 'danger');
       return;
@@ -49,6 +73,7 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
       return;
     }
     if (state.runningCellId !== null) {
+      // Queue the cell
       if (!executionQueue.includes(id)) {
         executionQueue.push(id);
         cell.dom.root.classList.add('queued');
@@ -62,8 +87,14 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
       if (advance) advanceSelectionAfter(idx);
       return;
     }
+    // Run now
     executeNextInQueue(id);
     if (insertBelow) {
+      // Safety check
+      if (!operations) {
+        console.error('[Jupy] insertBelow: operations is null!');
+        return;
+      }
       operations.insertCellAt(idx + 1, '', { focus: true });
     } else if (advance) {
       advanceSelectionAfter(idx);
@@ -73,16 +104,29 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
   }
 
   function handleRunMessage(data) {
-    if (!state.runningCellId) return;
+    if (!state.runningCellId) {
+      console.warn('[Jupy] handleRunMessage: no running cell');
+      return;
+    }
     const cell = getCell(state.runningCellId);
-    if (!cell) return;
+    if (!cell) {
+      console.warn('[Jupy] handleRunMessage: running cell not found', state.runningCellId);
+      state.runningCellId = null;
+      setStatus('idle');
+      return;
+    }
 
-    if (data.type === 'stdout') appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stdout');
-    else if (data.type === 'stderr') appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stderr');
-    else if (data.type === 'plot') appendCellPlot(cell, data.html);
-    else if (data.type === 'display') appendDisplayData(cell, data.data);
-    else if (data.type === 'widget') appendWidget(cell, data.data);
-    else if (data.type === 'stdin_request') {
+    if (data.type === 'stdout') {
+      appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stdout');
+    } else if (data.type === 'stderr') {
+      appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stderr');
+    } else if (data.type === 'plot') {
+      appendCellPlot(cell, data.html);
+    } else if (data.type === 'display') {
+      appendDisplayData(cell, data.data);
+    } else if (data.type === 'widget') {
+      appendWidget(cell, data.data);
+    } else if (data.type === 'stdin_request') {
       appendCellStdinPrompt(cell, data.prompt, (value) => {
         runSocket.send({ action: 'stdin_reply', value });
       });

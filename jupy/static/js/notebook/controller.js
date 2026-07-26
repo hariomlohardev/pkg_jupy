@@ -41,10 +41,10 @@ export function createNotebookController({
     });
   }
 
-  // ===== Selection (created first, uses updateSelectionUI) =====
+  // ===== Selection =====
   const selection = createSelection(state, updateSelectionUI);
 
-  // ===== Build cell (needs selection and execution) =====
+  // ===== Build cell =====
   function buildCell(source, type = 'code') {
     const id = 'cell-' + (++state.idCounter);
     return createCell(
@@ -75,22 +75,22 @@ export function createNotebookController({
     );
   }
 
-  // ===== Operations (needs selection.selectCell) =====
+  // ===== Operations =====
   const operations = createOperations(state, buildCell, reorderDom, selection.selectCell, showToast, runSocket);
 
-  // ===== Status (must be defined before execution) =====
+  // ===== Status =====
   const status = createStatus(state);
   function setStatus(newStatus) {
     status.setStatus(newStatus);
   }
 
-  // ===== Execution (needs operations, selection, and setStatus) =====
+  // ===== Execution (depends on operations) =====
   const execution = createExecution(state, runSocket, showToast, setStatus, operations, selection);
 
-  // ===== Clipboard (needs operations and selection) =====
+  // ===== Clipboard =====
   const clipboard = createClipboard(state, operations, selection);
 
-  // ===== Undo/Redo (needs operations and selection) =====
+  // ===== Undo/Redo =====
   const undoRedo = createUndoRedo(state, operations, selection);
 
   // ===== Other modules =====
@@ -101,11 +101,9 @@ export function createNotebookController({
 
   // ===== Load notebook =====
   function loadNotebook(cellDataArray) {
-    // Clear all cells
     while (state.cells.length > 0) {
       operations.deleteCell(state.cells[0].id, true);
     }
-    // Insert each cell
     cellDataArray.forEach((item, index) => {
       const type = item.type || 'code';
       const source = item.source || '';
@@ -153,6 +151,6 @@ export function createNotebookController({
     toggleLineNumbers: lineNumbers.toggle,
     togglePresentation: presentation.toggle,
     setStatus,
-    executeNextInQueue: execution.executeNextInQueue, // for operations.js
+    executeNextInQueue: execution.executeNextInQueue,
   };
 }

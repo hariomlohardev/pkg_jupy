@@ -3,13 +3,43 @@
 
 KERNEL_WORKER_SCRIPT = r"""
 import sys, io, ast, base64, json, traceback, builtins, warnings, re, keyword, importlib, threading
-import contextlib, time, os, subprocess, glob, shutil, tempfile, shlex, pdb
+import contextlib, time, os, subprocess, glob, shutil, tempfile, shlex, pdb, gc, psutil
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 
 # ----------------------------------------------------------------------
 # Global namespace (defined once)
 # ----------------------------------------------------------------------
 namespace = {"__name__": "__main__"}
+
+# ----------------------------------------------------------------------
+# Debugger globals
+# ----------------------------------------------------------------------
+_breakpoints = []
+_debugger_enabled = False
+_debugger_event = threading.Event()
+_debugger_mode = None
+_debugger_ws = None
+
+def _debugger_trace(frame, event, arg):
+    if not _debugger_enabled:
+        return _debugger_trace
+    filename = frame.f_code.co_filename
+    lineno = frame.f_lineno
+    for bp in _breakpoints:
+        if bp.get("file") == filename and bp.get("line") == lineno:
+            if _debugger_ws:
+                _debugger_ws({"type": "paused", "file": filename, "line": lineno, "frame": str(frame.f_locals)})
+            _debugger_event.clear()
+            _debugger_event.wait()
+            if _debugger_mode == "stop":
+                return None
+            elif _debugger_mode == "continue":
+                return _debugger_trace
+            elif _debugger_mode == "step_over":
+                return _debugger_trace
+            elif _debugger_mode == "step_into":
+                return _debugger_trace
+    return _debugger_trace
 
 # ----------------------------------------------------------------------
 # Helpers (completions, hover)
@@ -217,6 +247,10 @@ def _run_magic(line, cell, namespace):
         return _magic_history(args, cell, namespace)
     elif magic_name == 'debug':
         return "Debugger not implemented. Use %pdb (which is also limited in headless mode)."
+    elif magic_name == 'gc':
+        return _magic_gc(args, cell, namespace)
+    elif magic_name == 'cache':
+        return _magic_cache(args, cell, namespace)
     else:
         return f"Unknown magic: {magic_name}"
 
@@ -650,6 +684,39 @@ def _magic_history(args, cell, namespace):
         return "No history yet."
     return "History:\n" + '\n'.join(f"{i+1}: {line}" for i, line in enumerate(lines))
 
+def _magic_gc(args, cell, namespace):
+    import gc, psutil
+    process = psutil.Process()
+    before = process.memory_info().rss / (1024**2)
+    collected = gc.collect()
+    after = process.memory_info().rss / (1024**2)
+    return f"Garbage collection: {collected} objects collected. Memory: {before:.1f} MB -> {after:.1f} MB (freed {before-after:.1f} MB)"
+
+def _magic_cache(args, cell, namespace):
+    if len(args) < 2:
+        return "Usage: %cache save varname [filename]  or  %cache load varname [filename]"
+    action = args[0]
+    varname = args[1]
+    filename = args[2] if len(args) > 2 else f"{varname}.pkl"
+    try:
+        import joblib
+    except ImportError:
+        return "joblib not installed. Please install: pip install joblib"
+    if action == 'save':
+        if varname not in namespace:
+            return f"Variable {varname} not found in namespace."
+        obj = namespace[varname]
+        joblib.dump(obj, filename)
+        return f"Saved {varname} to {filename}"
+    elif action == 'load':
+        if not os.path.exists(filename):
+            return f"File {filename} not found."
+        obj = joblib.load(filename)
+        namespace[varname] = obj
+        return f"Loaded {varname} from {filename}"
+    else:
+        return "Invalid action. Use 'save' or 'load'."
+
 # ----------------------------------------------------------------------
 # Full ipywidgets system
 # ----------------------------------------------------------------------
@@ -1042,7 +1109,7 @@ def _custom_input(prompt=""):
 builtins.input = _custom_input
 
 # ----------------------------------------------------------------------
-# Main execution loop (fixed magic context)
+# Main execution loop
 # ----------------------------------------------------------------------
 while True:
     line = sys.stdin.readline()
@@ -1071,11 +1138,67 @@ while True:
             if widget_id in _widgets:
                 _widgets[widget_id]._handle_frontend_event(event_data)
             continue
+        elif action == "list_vars":
+            vars_list = []
+            for name, val in namespace.items():
+                if name.startswith('_'):
+                    continue
+                try:
+                    size = sys.getsizeof(val)
+                    type_name = type(val).__name__
+                    length = len(val) if hasattr(val, '__len__') else None
+                    vars_list.append({
+                        "name": name,
+                        "type": type_name,
+                        "size": size,
+                        "length": length,
+                    })
+                except:
+                    pass
+            sys.stdout.write(f"---JUPY_VARS:{json.dumps(vars_list)}---\n")
+            sys.stdout.flush()
+        elif action == "df_preview":
+            var_name = data.get("var")
+            rows = data.get("rows", 10)
+            html = "<p>Variable not found or not a DataFrame</p>"
+            if var_name in namespace:
+                obj = namespace[var_name]
+                try:
+                    import pandas as pd
+                    if isinstance(obj, pd.DataFrame):
+                        html = obj.head(rows).to_html()
+                    elif hasattr(obj, 'to_html'):
+                        html = obj.to_html()
+                except:
+                    pass
+            sys.stdout.write(f"---JUPY_DF_HTML:{html}---\n")
+            sys.stdout.flush()
+        elif action == "set_breakpoints":
+            breakpoints = data.get("breakpoints", [])
+            _breakpoints = breakpoints
+            _debugger_enabled = True
+            sys.stdout.write("---JUPY_BREAKPOINTS_SET---\n")
+            sys.stdout.flush()
+        elif action == "debugger":
+            cmd = data.get("cmd")
+            arg = data.get("arg")
+            if cmd == "step":
+                _debugger_event.set()
+                _debugger_mode = arg
+            elif cmd == "continue":
+                _debugger_event.set()
+                _debugger_mode = "continue"
+            elif cmd == "stop":
+                _debugger_event.set()
+                _debugger_mode = "stop"
+            sys.stdout.write("---JUPY_DEBUGGER_ACK---\n")
+            sys.stdout.flush()
         elif action == "execute":
             code = data.get("code", "")
             lines = code.splitlines()
+            
             # ---------- Cell magic %% ----------
-            if lines and lines[0].startswith('%%'):
+            if lines and lines[0].strip().startswith('%%'):
                 magic_line = lines[0]
                 cell_body = '\n'.join(lines[1:])
                 parts = magic_line[2:].strip().split()
@@ -1091,53 +1214,62 @@ while True:
                 continue
 
             # ---------- Line magic % ----------
-            remaining_code = code
-            if lines and lines[0].strip().startswith('%'):
-                magic_line = lines[0].strip()
+            # Skip leading empty lines
+            non_empty_lines = [l for l in lines if l.strip()]
+            if non_empty_lines and non_empty_lines[0].strip().startswith('%'):
+                # First non-empty line is a magic
+                magic_line = non_empty_lines[0].strip()
+                # Remove that line from the original lines
+                first_non_empty_idx = next(i for i, l in enumerate(lines) if l.strip())
+                # Run the magic
                 result = _run_magic(magic_line, None, namespace)
                 if result:
                     sys.stdout.write("---JUPY_STDOUT---\n")
                     sys.stdout.write(result + "\n")
-                if len(lines) > 1:
-                    remaining_code = '\n'.join(lines[1:])
-                else:
-                    remaining_code = ''
-                if not remaining_code:
+                # Keep the rest of the lines (including empty ones)
+                remaining_lines = lines[first_non_empty_idx+1:]
+                remaining_code = '\n'.join(remaining_lines)
+                if not remaining_code.strip():
                     sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
                     sys.stdout.flush()
                     continue
-                lines = remaining_code.splitlines()
+                code = remaining_code
+                lines = remaining_lines
 
             # ---------- System command ! ----------
-            if remaining_code:
-                first_line = remaining_code.lstrip()
-                if first_line.startswith('!'):
-                    cmd_line = lines[0].strip()
-                    if cmd_line.startswith('!'):
-                        cmd = cmd_line[1:].strip()
-                    else:
-                        cmd = cmd_line
-                    try:
-                        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
-                        if proc.stdout:
-                            sys.stdout.write("---JUPY_STDOUT---\n")
-                            sys.stdout.write(proc.stdout)
-                        if proc.stderr:
-                            sys.stdout.write("---JUPY_STDERR---\n")
-                            sys.stdout.write(proc.stderr)
-                    except Exception as e:
+            # Check the first non-empty line for !
+            non_empty_lines = [l for l in lines if l.strip()]
+            if non_empty_lines and non_empty_lines[0].strip().startswith('!'):
+                cmd_line = non_empty_lines[0].strip()
+                if cmd_line.startswith('!'):
+                    cmd = cmd_line[1:].strip()
+                else:
+                    cmd = cmd_line
+                first_non_empty_idx = next(i for i, l in enumerate(lines) if l.strip())
+                try:
+                    proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                    if proc.stdout:
+                        sys.stdout.write("---JUPY_STDOUT---\n")
+                        sys.stdout.write(proc.stdout)
+                    if proc.stderr:
                         sys.stdout.write("---JUPY_STDERR---\n")
-                        sys.stdout.write(str(e) + "\n")
-                    remaining_code = '\n'.join(lines[1:]) if len(lines) > 1 else ''
-                    if not remaining_code:
-                        sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
-                        sys.stdout.flush()
-                        continue
-                    lines = remaining_code.splitlines()
+                        sys.stdout.write(proc.stderr)
+                except Exception as e:
+                    sys.stdout.write("---JUPY_STDERR---\n")
+                    sys.stdout.write(str(e) + "\n")
+                # Remove the command line from code
+                remaining_lines = lines[first_non_empty_idx+1:]
+                remaining_code = '\n'.join(remaining_lines)
+                if not remaining_code.strip():
+                    sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
+                    sys.stdout.flush()
+                    continue
+                code = remaining_code
+                lines = remaining_lines
 
             # ---------- Record history ----------
-            if remaining_code:
-                _history_lines.append(remaining_code)
+            if code.strip():
+                _history_lines.append(code)
 
             # Patch IPython again (if imported later)
             _patch_ipython_display()
@@ -1153,11 +1285,15 @@ while True:
                         except:
                             pass
 
+            # Enable debugger trace if breakpoints are set
+            if _breakpoints:
+                sys.settrace(_debugger_trace)
+
             # ---------- Normal Python execution ----------
             out, err = io.StringIO(), io.StringIO()
             try:
                 with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                    tree = ast.parse(remaining_code, mode="exec")
+                    tree = ast.parse(code, mode="exec")
                     if tree.body and isinstance(tree.body[-1], ast.Expr):
                         last = tree.body.pop()
                         if tree.body:
@@ -1174,7 +1310,7 @@ while True:
                             else:
                                 sys.stdout.write(repr(val) + "\n")
                     else:
-                        exec(compile(remaining_code, "<cell>", "exec"), namespace)
+                        exec(compile(code, "<cell>", "exec"), namespace)
                     plots = _capture_plots()
                 stdout_val = out.getvalue()
                 stderr_val = err.getvalue()

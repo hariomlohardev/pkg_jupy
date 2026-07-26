@@ -1,6 +1,6 @@
 """
 jupy/core/kernel/manager.py
-KernelManager class with startup timeout and debug logging.
+KernelManager class with startup timeout, parallel execution, and per-cell timeout.
 """
 import json
 import os
@@ -10,9 +10,9 @@ import threading
 import queue
 import tempfile
 import atexit
+import signal
+import re
 from jupy.core import envmanager
-
-# The worker script is defined in worker_script.py
 from .worker_script import KERNEL_WORKER_SCRIPT
 
 def _kill_process_tree(proc):
@@ -37,30 +37,26 @@ def _reap_and_close(proc):
 
 class KernelManager:
     def __init__(self):
-        print("[Kernel] KernelManager.__init__ started", flush=True)
         self.exec_count = 0
         self.proc = None
         self.lock = threading.Lock()
         self.comm_lock = threading.Lock()
         self.worker_script_path = None
-        print("[Kernel] Resolving active environment...", flush=True)
         self.env_info = envmanager.resolve_active_env(
             on_progress=lambda m: print(m, flush=True)
         )
         self.python = self.env_info["python"]
-        print(f"[Kernel] Python interpreter: {self.python}", flush=True)
-        print("[Kernel] Calling _ensure_kernel_proc...", flush=True)
+        self.default_timeout = 60
+        self._debugger_ws = None
         self._ensure_kernel_proc()
-        print("[Kernel] _ensure_kernel_proc completed.", flush=True)
         atexit.register(self._cleanup_worker_script)
 
     def _cleanup_worker_script(self):
         if self.worker_script_path and os.path.exists(self.worker_script_path):
             try:
                 os.unlink(self.worker_script_path)
-                print(f"[Kernel] Cleaned up temp script: {self.worker_script_path}", flush=True)
-            except Exception as e:
-                print(f"[Kernel] Failed to clean up temp script: {e}", flush=True)
+            except Exception:
+                pass
 
     def _ensure_kernel_proc(self):
         print("[Kernel] _ensure_kernel_proc entered", flush=True)
@@ -94,7 +90,7 @@ class KernelManager:
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,
-                        encoding='utf-8',   # Force UTF-8 to handle Unicode/emoji
+                        encoding='utf-8',
                         bufsize=1,
                         env=env
                     )
@@ -235,125 +231,381 @@ class KernelManager:
                 proc.stdin.flush()
             except: pass
 
-    def execute(self, code, ws_send_fn):
+    # ---- Execute with magic support ----
+    def execute(self, code, ws_send_fn, timeout=None, language='python'):
+        if timeout is None:
+            timeout = self.default_timeout
+
         self.exec_count += 1
-        print(f"[Kernel] execute called with code length: {len(code)}", flush=True)
-        lines = code.splitlines()
-        pip_cmds, py_lines = [], []
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith(('!pip install', '%pip install', 'pip install')):
-                cmd = stripped.lstrip('!%').lstrip()
-                if cmd.startswith('pip install '):
-                    clean_cmd = cmd[11:].strip()
-                    if clean_cmd:
-                        pip_cmds.append(clean_cmd)
-            else:
-                py_lines.append(line)
-        for cmd in pip_cmds:
-            ws_send_fn({"type": "stdout", "text": f"Installing {cmd}...\n"})
-            p = subprocess.run([self.python, "-m", "pip", "install"] + cmd.split(), capture_output=True, text=True)
-            if p.stdout: ws_send_fn({"type": "stdout", "text": p.stdout})
-            if p.stderr: ws_send_fn({"type": "stderr", "text": p.stderr})
-        clean_code = "\n".join(py_lines)
-        if not clean_code.strip():
-            ws_send_fn({"type": "complete", "exec_count": self.exec_count})
+        exec_count = self.exec_count
+
+        if language != 'python':
+            self._execute_other_language(code, ws_send_fn, language, timeout, exec_count)
             return
-        req = json.dumps({"action": "execute", "code": clean_code}) + "\n"
-        print(f"[Kernel] Sending execute request: {clean_code[:50]}...", flush=True)
+
+        # ---- Handle magics ----
+        lines = code.splitlines()
+        remaining_code = code
+
+        # Cell magic %%
+        if lines and lines[0].strip().startswith('%%'):
+            magic_line = lines[0]
+            cell_body = '\n'.join(lines[1:])
+            parts = magic_line[2:].strip().split()
+            magic_name = parts[0] if parts else ''
+            args = parts[1:]
+            magic_str = '%' + magic_name + ' ' + ' '.join(args)
+            result = self._run_magic(magic_str, cell_body)
+            if result:
+                ws_send_fn({"type": "stdout", "text": result + "\n"})
+            ws_send_fn({"type": "complete", "exec_count": exec_count})
+            return
+
+        # Line magic %
+        non_empty_lines = [l for l in lines if l.strip()]
+        if non_empty_lines and non_empty_lines[0].strip().startswith('%'):
+            magic_line = non_empty_lines[0].strip()
+            first_non_empty_idx = next(i for i, l in enumerate(lines) if l.strip())
+            result = self._run_magic(magic_line, None)
+            if result:
+                ws_send_fn({"type": "stdout", "text": result + "\n"})
+            remaining_lines = lines[first_non_empty_idx+1:]
+            remaining_code = '\n'.join(remaining_lines)
+            if not remaining_code.strip():
+                ws_send_fn({"type": "complete", "exec_count": exec_count})
+                return
+
+        # ---- Execute remaining code (if any) ----
+        if remaining_code.strip():
+            self._execute_python(remaining_code, ws_send_fn, timeout, exec_count)
+        else:
+            ws_send_fn({"type": "complete", "exec_count": exec_count})
+
+    def _run_magic(self, magic_line, cell_body):
+        """
+        Execute a magic command by writing a temporary Python file.
+        This avoids command-line length limits on Windows.
+        """
+        worker_code = KERNEL_WORKER_SCRIPT
+
+        if cell_body is not None:
+            runner = f"""
+import sys, io, json, re
+
+# Embed the worker script to define all magics
+{worker_code}
+
+# Now run the magic
+magic_line = {repr(magic_line)}
+cell_body = {repr(cell_body)}
+namespace = {{"__name__": "__main__"}}
+out = io.StringIO()
+err = io.StringIO()
+try:
+    sys.stdout = out
+    sys.stderr = err
+    result = _run_magic(magic_line, cell_body, namespace)
+finally:
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+print("---JUPY_MAGIC_RESULT---")
+if result:
+    print(result)
+if out.getvalue():
+    print(out.getvalue(), end='')
+if err.getvalue():
+    print(err.getvalue(), end='', file=sys.stderr)
+"""
+        else:
+            runner = f"""
+import sys, io, json, re
+
+{worker_code}
+
+magic_line = {repr(magic_line)}
+namespace = {{"__name__": "__main__"}}
+out = io.StringIO()
+err = io.StringIO()
+try:
+    sys.stdout = out
+    sys.stderr = err
+    result = _run_magic(magic_line, None, namespace)
+finally:
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+print("---JUPY_MAGIC_RESULT---")
+if result:
+    print(result)
+if out.getvalue():
+    print(out.getvalue(), end='')
+if err.getvalue():
+    print(err.getvalue(), end='', file=sys.stderr)
+"""
+        # Write runner to a temporary file
+        fd, temp_path = tempfile.mkstemp(suffix='.py', text=True)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(runner)
+            
+            # Execute the temp file
+            proc = subprocess.run(
+                [self.python, temp_path],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=os.environ.copy()
+            )
+            output = ""
+            if proc.stdout:
+                if "---JUPY_MAGIC_RESULT---" in proc.stdout:
+                    parts = proc.stdout.split("---JUPY_MAGIC_RESULT---", 1)
+                    if len(parts) > 1:
+                        output = parts[1].strip()
+                else:
+                    output = proc.stdout.strip()
+            if proc.stderr:
+                output += "\n" + proc.stderr.strip()
+            return output if output else None
+        except subprocess.TimeoutExpired:
+            return "Magic timed out after 15 seconds."
+        except Exception as e:
+            return f"Error running magic: {e}"
+        finally:
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+
+    def _execute_python(self, code, ws_send_fn, timeout, exec_count):
+        runner_script = f"""
+import sys, io, ast, base64, json, traceback, gc
+from contextlib import redirect_stdout, redirect_stderr
+
+out, err = io.StringIO(), io.StringIO()
+result_repr, error_tb = None, None
+plots = []
+
+def capture_plots():
+    plot_htmls = []
+    if "matplotlib.pyplot" in sys.modules:
+        import matplotlib.pyplot as plt
+        for i in plt.get_fignums():
+            try:
+                fig = plt.figure(i)
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", bbox_inches="tight", dpi=110)
+                buf.seek(0)
+                b64 = base64.b64encode(buf.read()).decode("ascii")
+                plot_htmls.append(f'<img class="notebook-plot" src="data:image/png;base64,{{b64}}" alt="Plot" />')
+            except Exception: pass
+        try: plt.close("all")
+        except Exception: pass
+    return plot_htmls
+
+try:
+    with redirect_stdout(out), redirect_stderr(err):
+        if "matplotlib" in sys.modules:
+            import matplotlib
+            try: matplotlib.use("Agg", force=True)
+            except Exception: pass
+
+        tree = ast.parse({repr(code)}, mode="exec")
+        if tree.body and isinstance(tree.body[-1], ast.Expr):
+            last = tree.body.pop()
+            if tree.body:
+                exec(compile(tree, "<cell>", "exec"), globals())
+            expr = ast.Expression(last.value)
+            ast.copy_location(expr, last.value)
+            value = eval(compile(expr, "<cell>", "eval"), globals())
+            if value is not None:
+                result_repr = repr(value)
+        else:
+            exec(compile({repr(code)}, "<cell>", "exec"), globals())
+        plots = capture_plots()
+except Exception as e:
+    error_tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+print("---JUPY_JSON_START---")
+print(json.dumps({{
+    "stdout": out.getvalue(),
+    "stderr": err.getvalue(),
+    "result": result_repr,
+    "error": error_tb,
+    "plots": plots
+}}))
+"""
+        proc = subprocess.Popen(
+            [self.python, "-c", runner_script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        timer = threading.Timer(timeout, lambda: proc.kill() if proc.poll() is None else None)
+        timer.start()
+        stdout, stderr = proc.communicate()
+        timer.cancel()
+
+        if proc.returncode != 0 and not stdout:
+            ws_send_fn({"type": "stderr", "text": f"\n⏹ Execution timed out after {timeout}s\n"})
+        else:
+            if "---JUPY_JSON_START---" in stdout:
+                parts = stdout.split("---JUPY_JSON_START---")
+                pre = parts[0]
+                if pre: ws_send_fn({"type": "stdout", "text": pre})
+                try:
+                    res = json.loads(parts[1].strip())
+                    if res.get("stdout"): ws_send_fn({"type": "stdout", "text": res["stdout"]})
+                    if res.get("stderr"): ws_send_fn({"type": "stderr", "text": res["stderr"]})
+                    if res.get("result"): ws_send_fn({"type": "stdout", "text": res["result"]})
+                    if res.get("error"): ws_send_fn({"type": "stderr", "text": res["error"]})
+                    if res.get("plots"):
+                        for p in res["plots"]: ws_send_fn({"type": "plot", "html": p})
+                except Exception:
+                    pass
+        ws_send_fn({"type": "complete", "exec_count": exec_count})
+
+    def _execute_other_language(self, code, ws_send_fn, language, timeout, exec_count):
+        if language == 'r':
+            interpreter = 'Rscript'
+            file_ext = '.R'
+        elif language == 'julia':
+            interpreter = 'julia'
+            file_ext = '.jl'
+        else:
+            ws_send_fn({"type": "stderr", "text": f"Unsupported language: {language}"})
+            ws_send_fn({"type": "complete", "exec_count": exec_count})
+            return
+
+        with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False, mode='w') as f:
+            f.write(code)
+            temp_file = f.name
+
+        try:
+            proc = subprocess.Popen(
+                [interpreter, temp_file],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+            timer = threading.Timer(timeout, lambda: proc.kill() if proc.poll() is None else None)
+            timer.start()
+            stdout, stderr = proc.communicate()
+            timer.cancel()
+
+            if stdout:
+                ws_send_fn({"type": "stdout", "text": stdout})
+            if stderr:
+                ws_send_fn({"type": "stderr", "text": stderr})
+        except Exception as e:
+            ws_send_fn({"type": "stderr", "text": f"Error executing {language}: {str(e)}"})
+        finally:
+            try:
+                os.unlink(temp_file)
+            except:
+                pass
+            ws_send_fn({"type": "complete", "exec_count": exec_count})
+
+    # ---- Variable Explorer ----
+    def get_variables(self):
         with self.comm_lock:
             try:
                 self._ensure_kernel_proc()
-                current_proc = self.proc
-            except Exception as e:
-                print(f"[Kernel] Failed to ensure kernel: {e}", flush=True)
-                ws_send_fn({"type": "stderr", "text": f"{e}\n"})
-                ws_send_fn({"type": "complete", "exec_count": self.exec_count})
-                return
+                proc = self.proc
+                if proc is None or proc.poll() is not None:
+                    return []
+                req = json.dumps({"action": "list_vars"}) + "\n"
+                proc.stdin.write(req)
+                proc.stdin.flush()
+                while proc and proc.poll() is None:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    if line.startswith("---JUPY_VARS:"):
+                        json_str = line.replace("---JUPY_VARS:", "").strip()
+                        if json_str.endswith("---"):
+                            json_str = json_str[:-3]
+                        try:
+                            return json.loads(json_str)
+                        except:
+                            return []
+                return []
+            except Exception:
+                return []
+
+    # ---- DataFrame Preview ----
+    def get_dataframe_preview(self, var_name, rows=10):
+        with self.comm_lock:
             try:
-                current_proc.stdin.write(req)
-                current_proc.stdin.flush()
-                print("[Kernel] Execute request sent.", flush=True)
-            except Exception as e:
-                print(f"[Kernel] Error sending request: {e}", flush=True)
-                self.proc = None
-                try:
-                    self._ensure_kernel_proc()
-                    current_proc = self.proc
-                    current_proc.stdin.write(req)
-                    current_proc.stdin.flush()
-                    print("[Kernel] Retry execute request sent.", flush=True)
-                except Exception as e2:
-                    print(f"[Kernel] Retry failed: {e2}", flush=True)
-                    ws_send_fn({"type": "stderr", "text": f"Kernel communication error: {str(e2)}\n"})
-                    ws_send_fn({"type": "complete", "exec_count": self.exec_count})
+                self._ensure_kernel_proc()
+                proc = self.proc
+                if proc is None or proc.poll() is not None:
+                    return "<p>Kernel not running</p>"
+                req = json.dumps({"action": "df_preview", "var": var_name, "rows": rows}) + "\n"
+                proc.stdin.write(req)
+                proc.stdin.flush()
+                while proc and proc.poll() is None:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    if line.startswith("---JUPY_DF_HTML:"):
+                        html = line.replace("---JUPY_DF_HTML:", "").strip()
+                        if html.endswith("---"):
+                            html = html[:-3]
+                        return html
+                return "<p>No DataFrame found</p>"
+            except Exception:
+                return "<p>Error fetching DataFrame</p>"
+
+    # ---- Debugger ----
+    def set_breakpoints(self, breakpoints):
+        with self.comm_lock:
+            try:
+                self._ensure_kernel_proc()
+                proc = self.proc
+                if proc is None or proc.poll() is not None:
                     return
-            collecting = None
-            plot_lines = []
-            print("[Kernel] Reading output...", flush=True)
-            while current_proc:
-                try:
-                    line = current_proc.stdout.readline()
-                except:
-                    line = ""
-                if not line:
-                    if current_proc.poll() is not None:
-                        ws_send_fn({"type": "stderr", "text": "\n⏹ Execution force stopped by user.\n"})
-                    break
-                if line.startswith("---JUPY_STDIN_REQ:"):
-                    prompt = line.replace("---JUPY_STDIN_REQ:", "").replace("---", "").strip()
-                    ws_send_fn({"type": "stdin_request", "prompt": prompt})
-                    continue
-                if "---JUPY_CELL_COMPLETE---" in line:
-                    break
-                if "---JUPY_STDOUT---" in line:
-                    collecting = 'stdout'
-                    continue
-                if "---JUPY_STDERR---" in line:
-                    collecting = 'stderr'
-                    continue
-                if "---JUPY_PLOTS_START---" in line:
-                    collecting = 'plots'
-                    plot_lines = []
-                    continue
-                if "---JUPY_PLOTS_END---" in line:
-                    collecting = None
-                    for p in plot_lines:
-                        ws_send_fn({"type": "plot", "html": p})
-                    plot_lines = []
-                    continue
-                if "---JUPY_DISPLAY_DATA---" in line:
-                    json_line = current_proc.stdout.readline()
-                    try:
-                        mime_data = json.loads(json_line)
-                        ws_send_fn({"type": "display", "data": mime_data})
-                    except: pass
-                    continue
-                if "---JUPY_WIDGET---" in line:
-                    json_line = current_proc.stdout.readline()
-                    try:
-                        widget_msg = json.loads(json_line)
-                        ws_send_fn({"type": "widget", "data": widget_msg})
-                    except: pass
-                    continue
-                if "---JUPY_LOAD_CELL---" in line:
-                    json_line = current_proc.stdout.readline()
-                    try:
-                        load_data = json.loads(json_line)
-                        ws_send_fn({"type": "load", "data": load_data})
-                    except: pass
-                    continue
-                if collecting == 'stdout':
-                    if line.strip():
-                        ws_send_fn({"type": "stdout", "text": line})
-                elif collecting == 'stderr':
-                    if line.strip():
-                        ws_send_fn({"type": "stderr", "text": line})
-                elif collecting == 'plots':
-                    plot_lines.append(line.strip())
-                else:
-                    if line.strip():
-                        ws_send_fn({"type": "stdout", "text": line})
-            print("[Kernel] Finished reading output.", flush=True)
-        ws_send_fn({"type": "complete", "exec_count": self.exec_count})
-        print("[Kernel] Complete signal sent.", flush=True)
+                req = json.dumps({"action": "set_breakpoints", "breakpoints": breakpoints}) + "\n"
+                proc.stdin.write(req)
+                proc.stdin.flush()
+                while proc and proc.poll() is None:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    if "---JUPY_BREAKPOINTS_SET---" in line:
+                        break
+            except Exception:
+                pass
+
+    def set_debugger_ws(self, ws_send):
+        self._debugger_ws = ws_send
+
+    def debugger_step(self, mode):
+        self._send_debugger_command("step", mode)
+
+    def debugger_continue(self):
+        self._send_debugger_command("continue")
+
+    def debugger_stop(self):
+        self._send_debugger_command("stop")
+
+    def _send_debugger_command(self, cmd, arg=None):
+        with self.comm_lock:
+            try:
+                proc = self.proc
+                if proc is None or proc.poll() is not None:
+                    return
+                data = {"action": "debugger", "cmd": cmd}
+                if arg:
+                    data["arg"] = arg
+                req = json.dumps(data) + "\n"
+                proc.stdin.write(req)
+                proc.stdin.flush()
+                while proc and proc.poll() is None:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    if "---JUPY_DEBUGGER_ACK---" in line:
+                        break
+            except Exception:
+                pass

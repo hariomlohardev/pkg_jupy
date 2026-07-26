@@ -1,0 +1,4 @@
+.command-item:hover {
+    background: var(--color-secondary) !important;
+    color: #111827;
+}

@@ -1,0 +1,3 @@
+.var-item:hover {
+    background: var(--color-bg-well);
+}

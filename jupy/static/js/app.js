@@ -19,6 +19,15 @@ import { initDropdowns } from './app/init.js';
 import { initRunDropdown } from './app/run.js';
 import { initExportDropdown } from './app/export.js';
 import { initEditDropdown } from './app/edit.js';
+import { initCommandPalette } from './commandPalette.js';
+import { initZenMode } from './zenMode.js';
+import { initFileBrowser } from './fileBrowser.js';
+import { initGitIntegration } from './gitIntegration.js';
+import { initCellFolding } from './cellFolding.js';
+import { initVariableExplorer } from './variableExplorer.js';
+import { initDebugger } from './debugger.js';
+import { initHyperparams } from './hyperparams.js';
+import { initTqdmIntegration } from './tqdmIntegration.js';
 
 (() => {
   // ===== DOM Elements =====
@@ -199,12 +208,46 @@ import { initEditDropdown } from './app/edit.js';
   initExportDropdown(notebook, showToast);
   initEditDropdown(notebook, showToast);
 
+  // ===== Command Palette =====
+  initCommandPalette(notebook);
+
+  // ===== Zen Mode =====
+  initZenMode();
+
+  // ===== File Browser =====
+  initFileBrowser(document.querySelector('.app-workspace'));
+
+  // ===== Git Integration =====
+  const statusBar = document.querySelector('.system-bar');
+  if (statusBar) {
+    const gitContainer = document.createElement('span');
+    gitContainer.style.display = 'flex';
+    gitContainer.style.alignItems = 'center';
+    statusBar.appendChild(gitContainer);
+    initGitIntegration(gitContainer);
+  }
+
+  // ===== Cell Folding =====
+  initCellFolding(notebook);
+
+  // ===== Variable Explorer =====
+  initVariableExplorer(document.querySelector('.app-workspace'));
+
+  // ===== Debugger =====
+  initDebugger(notebook);
+
+  // ===== Hyperparameter Tuning =====
+  initHyperparams(notebook);
+
+  // ===== tqdm Integration =====
+  initTqdmIntegration(notebook);
+
   // ===== Presentation Button =====
   document.getElementById('btn-presentation')?.addEventListener('click', () => {
     notebook.togglePresentation();
   });
 
-  // ===== Restart / Interrupt methods (attach to notebook) =====
+  // ===== Restart / Interrupt methods =====
   notebook.restartKernel = async function() {
     try {
       const res = await fetch('/api/restart', { method: 'POST' });
@@ -283,11 +326,11 @@ import { initEditDropdown } from './app/edit.js';
 
   // ===== Default Notebook =====
   notebook.insertCellAt(0, [
-    '# JUPY - COLAB & JUPYTER SHORTCUTS INTEGRATION',
-    '# Press Ctrl + Shift + ? to open the Help Dialog!',
-    '# Press Ctrl + / inside CodeMirror to toggle comments!',
+    '# JUPY - FULL FEATURED LOCAL NOTEBOOK',
+    '# Press Ctrl + Shift + P for command palette',
+    '# Press Ctrl + Shift + ? for shortcuts help',
     'import time',
-    'print("Press Ctrl + Shift + ? to view all keyboard shortcuts!")',
+    'print("Welcome to Jupy!")',
   ].join('\n'));
 
   // ===== Menus =====

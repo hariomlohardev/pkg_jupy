@@ -1,3 +1,7 @@
+/**
+ * cells/cellFactory.js
+ * Builds code, markdown, and raw cells with drag handle and line number support.
+ */
 import { moveLineUp, moveLineDown, toggleComment } from './editorCommands.js';
 
 export function createCell(id, source, templates, hooks, registerAutocomplete, type = 'code') {
@@ -34,6 +38,7 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
     isPreview: false,
     dom: { root, runBtn, execCountEl, editorHost, outputEl, toolbar, insertBar, dragHandle },
     cm: null,
+    language: 'python',
   };
 
   let mode = 'python';
@@ -54,48 +59,79 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
       'Shift-Enter': (editor) => {
         if (cell.type === 'markdown') {
           renderMarkdown(cell);
-          hooks.onRun(cell.id, { advance: true });
-        } else {
-          hooks.onRun(cell.id, { advance: true });
         }
+        hooks.onRun(cell.id, { advance: true });
       },
-      'Ctrl-Enter': (editor) => { editor.state.completionActive?.close(); hooks.onRun(cell.id, { advance: false }); },
-      'Cmd-Enter': (editor) => { editor.state.completionActive?.close(); hooks.onRun(cell.id, { advance: false }); },
-      'Alt-Enter': (editor) => { editor.state.completionActive?.close(); hooks.onRun(cell.id, { insertBelow: true }); },
-      Esc: () => {
+      'Ctrl-Enter': (editor) => {
+        if (editor.state.completionActive) editor.state.completionActive.close();
+        hooks.onRun(cell.id, { advance: false });
+      },
+      'Cmd-Enter': (editor) => {
+        if (editor.state.completionActive) editor.state.completionActive.close();
+        hooks.onRun(cell.id, { advance: false });
+      },
+      'Alt-Enter': (editor) => {
+        if (editor.state.completionActive) editor.state.completionActive.close();
+        hooks.onRun(cell.id, { insertBelow: true });
+      },
+      'Esc': () => {
         if (cell.type === 'markdown' && cell.isPreview) {
           setMarkdownEdit(cell);
         } else {
           hooks.onExitEdit(cell.id);
         }
       },
-      'Alt-Up': (editor) => moveLineUp(editor),
-      'Alt-Down': (editor) => moveLineDown(editor),
-      'Ctrl-/': (editor) => toggleComment(editor),
-      'Cmd-/': (editor) => toggleComment(editor),
+      'Alt-Up': moveLineUp,
+      'Alt-Down': moveLineDown,
+      'Ctrl-/': toggleComment,
+      'Cmd-/': toggleComment,
     },
   });
   cell.cm = cm;
 
+  // Fallback keydown listener on root
+  root.addEventListener('keydown', (e) => {
+    if (e.shiftKey && e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      hooks.onRun(cell.id, { advance: true });
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (cm.state.completionActive) cm.state.completionActive.close();
+      hooks.onRun(cell.id, { advance: false });
+    } else if (e.altKey && e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      hooks.onRun(cell.id, { insertBelow: true });
+    }
+  });
+
+  // ---- MARKDOWN DOUBLE-CLICK ----
   if (cell.type === 'markdown') {
     root.addEventListener('dblclick', () => setMarkdownEdit(cell));
   }
 
+  // ---- AUTOCOMPLETE (code cells only) ----
   if (type === 'code') {
     registerAutocomplete(cm, cell.id);
   }
 
+  // ---- CHANGE / FOCUS EVENTS ----
   cm.on('change', () => {
     if (hooks.onCellChange) hooks.onCellChange(cell.id);
   });
 
   cm.on('focus', () => hooks.onEnterEdit(cell.id));
+
+  // ---- CLICK TO SELECT ----
   root.addEventListener('click', (e) => {
     if (!editorHost.contains(e.target) && !dragHandle?.contains(e.target)) {
       hooks.onSelect(cell.id);
     }
   });
 
+  // ---- RUN BUTTON ----
   runBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     if (cell.type === 'markdown' && cell.isPreview) {
@@ -105,6 +141,7 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
     }
   });
 
+  // ---- TOOLBAR ACTIONS ----
   toolbar.querySelector('[data-action="move-up"]').addEventListener('click', (e) => {
     e.stopPropagation();
     hooks.onMove(cell.id, -1);
@@ -118,10 +155,12 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
     hooks.onDelete(cell.id);
   });
 
+  // ---- INSERT BAR ----
   insertBar.querySelector('.add-cell-btn').addEventListener('click', () => {
     hooks.onInsertAfter(cell.id);
   });
 
+  // ---- MARKDOWN HELPERS ----
   function renderMarkdown(cell) {
     if (cell.type !== 'markdown') return;
     const src = cell.cm.getValue();
@@ -155,6 +194,7 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
     cm.focus();
   }
 
+  // ---- TOGGLE LINE NUMBERS ----
   cell.toggleLineNumbers = (enabled) => {
     cm.setOption('lineNumbers', enabled);
   };
