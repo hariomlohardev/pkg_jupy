@@ -1,18 +1,14 @@
-/**
- * notebook/execution.js
- * Cell execution, queue, message handling, status.
- */
-// import { clearCellOutput, appendCellOutput, appendCellPlot, appendCellStdinPrompt } from '../cells/cellOutput.js';
-import { 
-  clearCellOutput, 
-  appendCellOutput, 
-  appendCellPlot, 
+import {
+  clearCellOutput,
+  appendCellOutput,
+  appendCellPlot,
   appendCellStdinPrompt,
   appendDisplayData,
   appendWidget
 } from '../cells/cellOutput.js';
+
 export function createExecution(state, runSocket, showToast, setStatus, operations, selection) {
-  const { cells, indexOf, getCell, runningCellId, executionQueue } = state;
+  const { cells, indexOf, getCell, executionQueue } = state;
 
   function executeNextInQueue(id) {
     const cell = getCell(id);
@@ -80,21 +76,22 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
     if (!state.runningCellId) return;
     const cell = getCell(state.runningCellId);
     if (!cell) return;
+
     if (data.type === 'stdout') appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stdout');
-    if (data.type === 'stderr') appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stderr');
-    if (data.type === 'plot') appendCellPlot(cell, data.html);
-    if (data.type === 'display') {
-      appendDisplayData(cell, data.data);
-    }
-    if (data.type === 'widget') {
-      appendWidget(cell, data.data);
-    }
-    if (data.type === 'stdin_request') {
+    else if (data.type === 'stderr') appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stderr');
+    else if (data.type === 'plot') appendCellPlot(cell, data.html);
+    else if (data.type === 'display') appendDisplayData(cell, data.data);
+    else if (data.type === 'widget') appendWidget(cell, data.data);
+    else if (data.type === 'stdin_request') {
       appendCellStdinPrompt(cell, data.prompt, (value) => {
         runSocket.send({ action: 'stdin_reply', value });
       });
-    }
-    if (data.type === 'complete') {
+    } else if (data.type === 'load') {
+      if (data.data && data.data.content) {
+        cell.cm.setValue(data.data.content);
+        showToast('📄 Loaded file content into cell', 'success');
+      }
+    } else if (data.type === 'complete') {
       cell.dom.root.classList.remove('running', 'queued');
       cell.dom.runBtn.textContent = '▶';
       cell.dom.runBtn.title = 'Run cell (Shift+Enter)';

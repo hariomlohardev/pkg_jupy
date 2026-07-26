@@ -1,11 +1,7 @@
-/**
- * notebook/operations.js
- * Cell insertion, deletion, movement, merge, split.
- */
 import { clearCellOutput } from '../cells/cellOutput.js';
 
 export function createOperations(state, buildCell, reorderDom, selectCell, showToast, runSocket) {
-  const { cells, indexOf, getCell, getSelectedIndices, pushOperation, executionQueue, runningCellId } = state;
+  const { cells, indexOf, getCell, getSelectedIndices, pushOperation, executionQueue } = state;
 
   function insertCellAt(index, source = '', { focus = false, type = 'code' } = {}) {
     const cell = buildCell(source, type);
@@ -13,8 +9,6 @@ export function createOperations(state, buildCell, reorderDom, selectCell, showT
     reorderDom();
     cell.cm.refresh();
     if (focus) {
-      // We need enterEditMode – we'll call it from selection module via callback
-      // but here we just select and focus
       selectCell(cell.id);
       cell.cm.focus();
     } else {
@@ -26,9 +20,10 @@ export function createOperations(state, buildCell, reorderDom, selectCell, showT
   }
 
   function deleteCell(id, silent = false) {
-    if (id === runningCellId) {
+    const runningId = state.runningCellId;
+    if (id === runningId) {
       if (runSocket.isOpen) runSocket.send({ action: 'interrupt' });
-      runningCellId = null;
+      state.runningCellId = null;
       if (!silent) showToast('⚠️ RUNNING CELL DELETED & TERMINATED', 'danger');
     }
     const qIdx = executionQueue.indexOf(id);
@@ -50,6 +45,13 @@ export function createOperations(state, buildCell, reorderDom, selectCell, showT
       selectCell(cells[newIdx].id);
     }
     if (!silent) pushOperation({ type: 'delete', data: { index: idx, cellId: id, source, type } });
+
+    if (executionQueue.length > 0 && state.runningCellId === null) {
+      const nextId = executionQueue.shift();
+      if (window.__jupy_notebook && window.__jupy_notebook.executeNextInQueue) {
+        window.__jupy_notebook.executeNextInQueue(nextId);
+      }
+    }
   }
 
   function moveCell(id, delta) {
@@ -69,11 +71,13 @@ export function createOperations(state, buildCell, reorderDom, selectCell, showT
     const firstIdx = indices[0];
     let mergedContent = '';
     const removedIds = [];
+    const removedData = [];
     for (let i = indices.length - 1; i > 0; i--) {
       const idx = indices[i];
       const cell = cells[idx];
       mergedContent = cell.cm.getValue() + '\n' + mergedContent;
       removedIds.push(cell.id);
+      removedData.push({ source: cell.cm.getValue(), type: cell.type });
       deleteCell(cell.id, true);
     }
     const firstCell = cells[firstIdx];
@@ -82,7 +86,7 @@ export function createOperations(state, buildCell, reorderDom, selectCell, showT
     selectCell(firstCell.id);
     pushOperation({
       type: 'merge',
-      data: { first: firstCell.id, removed: removedIds, before: existing, after: firstCell.cm.getValue() }
+      data: { first: firstCell.id, removed: removedIds, removedData, before: existing, after: firstCell.cm.getValue() }
     });
   }
 
@@ -97,8 +101,9 @@ export function createOperations(state, buildCell, reorderDom, selectCell, showT
     const before = lines.slice(0, line).join('\n');
     const after = lines.slice(line).join('\n');
     cm.setValue(before);
-    const newCell = insertCellAt(indexOf(id) + 1, after, { focus: true });
-    pushOperation({ type: 'split', data: { id, before, after, newId: newCell.id } });
+    const newCell = insertCellAt(indexOf(id) + 1, after, { focus: true, type: cell.type });
+    pushOperation({ type: 'split', data: { id, before, after, newId: newCell.id, type: cell.type } });
+    return newCell;
   }
 
   return {

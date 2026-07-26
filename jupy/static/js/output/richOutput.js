@@ -1,40 +1,23 @@
-/**
- * output/richOutput.js
- * Handles rich MIME types: HTML, JavaScript, images (PNG/JPEG/GIF),
- * Plotly, Bokeh, Vega‑Lite, JSON, Markdown.
- */
-import { renderMarkdown } from '../cells/markdownRenderer.js';  // optional
+import { renderMarkdown } from '../cells/markdownRenderer.js';
 
-/**
- * Renders a MIME bundle inside a container element.
- * @param {HTMLElement} container - The DOM element to render into.
- * @param {Object} mimeData - Dictionary with MIME types as keys.
- * @param {Object} options - Additional options (e.g., for Plotly layout).
- * @returns {boolean} True if any MIME type was rendered.
- */
 export function renderRichOutput(container, mimeData, options = {}) {
-  // Priority order: HTML, JavaScript, Plotly, Bokeh, Vega‑Lite, SVG, PNG/JPEG/GIF, JSON, Markdown, Plain text.
   let rendered = false;
 
-  // 1. HTML – sanitize and insert
   if (mimeData['text/html']) {
     let html = mimeData['text/html'];
     if (window.DOMPurify) {
       html = window.DOMPurify.sanitize(html, { SAFE_FOR_JQUERY: true });
     }
     container.innerHTML = html;
-    // Execute any embedded scripts? We'll handle application/javascript separately.
-    // For safety, we don't execute scripts in HTML by default.
     rendered = true;
   }
 
-  // 2. JavaScript – execute in a sandboxed iframe
   if (mimeData['application/javascript']) {
     const iframe = document.createElement('iframe');
     iframe.style.width = '100%';
     iframe.style.border = 'none';
     iframe.style.background = 'transparent';
-    iframe.sandbox = 'allow-scripts allow-same-origin';
+    iframe.sandbox = 'allow-scripts';
     container.appendChild(iframe);
     const doc = iframe.contentDocument || iframe.contentWindow.document;
     doc.open();
@@ -43,7 +26,6 @@ export function renderRichOutput(container, mimeData, options = {}) {
     rendered = true;
   }
 
-  // 3. Plotly – application/vnd.plotly.v1+json
   if (mimeData['application/vnd.plotly.v1+json']) {
     const plotlyData = mimeData['application/vnd.plotly.v1+json'];
     const div = document.createElement('div');
@@ -60,7 +42,6 @@ export function renderRichOutput(container, mimeData, options = {}) {
     rendered = true;
   }
 
-  // 4. Bokeh – application/vnd.bokehjs_exec.v0+json
   if (mimeData['application/vnd.bokehjs_exec.v0+json']) {
     const bokehData = mimeData['application/vnd.bokehjs_exec.v0+json'];
     const div = document.createElement('div');
@@ -68,16 +49,25 @@ export function renderRichOutput(container, mimeData, options = {}) {
     div.style.height = '500px';
     container.appendChild(div);
     if (window.Bokeh) {
-      // Bokeh expects to be embedded with a script tag; we'll handle it differently.
-      // For simplicity, we'll just display a placeholder.
-      div.textContent = 'Bokeh support: please embed the Bokeh script.';
+      try {
+        if (bokehData.id) {
+          window.Bokeh.embed.embed_item(bokehData, div);
+        } else {
+          if (window.Bokeh.embed.embed_item) {
+            window.Bokeh.embed.embed_item(bokehData, div);
+          } else {
+            div.textContent = 'Bokeh embed not supported.';
+          }
+        }
+      } catch (e) {
+        div.textContent = 'Error rendering Bokeh plot: ' + e.message;
+      }
     } else {
       div.textContent = 'Bokeh library not loaded.';
     }
     rendered = true;
   }
 
-  // 5. Vega‑Lite – application/vnd.vegalite.v2+json
   if (mimeData['application/vnd.vegalite.v2+json']) {
     const vegaData = mimeData['application/vnd.vegalite.v2+json'];
     const div = document.createElement('div');
@@ -92,13 +82,11 @@ export function renderRichOutput(container, mimeData, options = {}) {
     rendered = true;
   }
 
-  // 6. Images – image/png, image/jpeg, image/gif
   const imageTypes = ['image/png', 'image/jpeg', 'image/gif'];
   for (const type of imageTypes) {
     if (mimeData[type]) {
       const img = document.createElement('img');
       let src = mimeData[type];
-      // If it's a base64 data URI, use directly; otherwise, treat as URL.
       if (!src.startsWith('data:')) {
         src = `data:${type};base64,${src}`;
       }
@@ -107,11 +95,10 @@ export function renderRichOutput(container, mimeData, options = {}) {
       img.style.height = 'auto';
       container.appendChild(img);
       rendered = true;
-      break; // only render the first image type found
+      break;
     }
   }
 
-  // 7. JSON – application/json (pretty printed)
   if (mimeData['application/json']) {
     const jsonData = mimeData['application/json'];
     const pre = document.createElement('pre');
@@ -124,7 +111,6 @@ export function renderRichOutput(container, mimeData, options = {}) {
     rendered = true;
   }
 
-  // 8. Markdown – text/markdown
   if (mimeData['text/markdown']) {
     const md = mimeData['text/markdown'];
     let html;
@@ -143,7 +129,6 @@ export function renderRichOutput(container, mimeData, options = {}) {
     rendered = true;
   }
 
-  // 9. Plain text fallback
   if (!rendered && mimeData['text/plain']) {
     const pre = document.createElement('pre');
     pre.textContent = mimeData['text/plain'];

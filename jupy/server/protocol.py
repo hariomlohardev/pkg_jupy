@@ -11,29 +11,76 @@ def make_ws_accept(key):
 def parse_ws_frame(rfile):
     try:
         head1_b = rfile.read(1)
-        if not head1_b: return None, None
+        if not head1_b:
+            return None, None
         head2_b = rfile.read(1)
-        if not head2_b: return None, None
+        if not head2_b:
+            return None, None
 
         head1, head2 = head1_b[0], head2_b[0]
+        fin = (head1 & 0x80) != 0
         opcode = head1 & 0x0F
-        if opcode == 0x8: return None, 0x8
+
+        if opcode == 0x8:
+            return None, 0x8
+        if opcode == 0x9:
+            has_mask = bool(head2 & 0x80)
+            length = head2 & 0x7F
+            if length == 126:
+                length = struct.unpack(">H", rfile.read(2))[0]
+            elif length == 127:
+                length = struct.unpack(">Q", rfile.read(8))[0]
+            masks = rfile.read(4) if has_mask else None
+            data = bytearray(rfile.read(length))
+            if has_mask:
+                for i in range(len(data)):
+                    data[i] ^= masks[i % 4]
+            return data.decode('utf-8', errors='ignore'), 0x9
+
+        if opcode != 0x1:
+            return None, 0x8
 
         has_mask = bool(head2 & 0x80)
         length = head2 & 0x7F
-
         if length == 126:
             length = struct.unpack(">H", rfile.read(2))[0]
         elif length == 127:
             length = struct.unpack(">Q", rfile.read(8))[0]
 
         masks = rfile.read(4) if has_mask else None
-        data = bytearray(rfile.read(length))
+        payload = bytearray()
+        chunk = bytearray(rfile.read(length))
         if has_mask:
-            for i in range(len(data)):
-                data[i] ^= masks[i % 4]
+            for i in range(len(chunk)):
+                chunk[i] ^= masks[i % 4]
+        payload.extend(chunk)
 
-        return data.decode('utf-8', errors='ignore'), opcode
+        while not fin:
+            head1_b = rfile.read(1)
+            if not head1_b:
+                return None, 0x8
+            head2_b = rfile.read(1)
+            if not head2_b:
+                return None, 0x8
+            head1, head2 = head1_b[0], head2_b[0]
+            fin = (head1 & 0x80) != 0
+            opcode = head1 & 0x0F
+            if opcode != 0x0:
+                return None, 0x8
+            has_mask = bool(head2 & 0x80)
+            length = head2 & 0x7F
+            if length == 126:
+                length = struct.unpack(">H", rfile.read(2))[0]
+            elif length == 127:
+                length = struct.unpack(">Q", rfile.read(8))[0]
+            masks = rfile.read(4) if has_mask else None
+            chunk = bytearray(rfile.read(length))
+            if has_mask:
+                for i in range(len(chunk)):
+                    chunk[i] ^= masks[i % 4]
+            payload.extend(chunk)
+
+        return payload.decode('utf-8', errors='ignore'), opcode
     except Exception:
         return None, 0x8
 
@@ -46,4 +93,15 @@ def make_ws_frame(message):
         header = struct.pack(">BBH", 0x81, 126, length)
     else:
         header = struct.pack(">BBQ", 0x81, 127, length)
+    return header + data
+
+def make_ws_pong(payload=""):
+    data = payload.encode('utf-8') if isinstance(payload, str) else payload
+    length = len(data)
+    if length <= 125:
+        header = struct.pack("BB", 0x8A, length)
+    elif length <= 65535:
+        header = struct.pack(">BBH", 0x8A, 126, length)
+    else:
+        header = struct.pack(">BBQ", 0x8A, 127, length)
     return header + data

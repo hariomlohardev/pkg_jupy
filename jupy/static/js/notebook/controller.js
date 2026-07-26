@@ -70,7 +70,8 @@ export function createNotebookController({
         onDragStart: (cellId, e) => { e.dataTransfer.setData('text/plain', cellId); },
         onDragEnd: () => {},
       },
-      registerAutocomplete
+      registerAutocomplete,
+      type
     );
   }
 
@@ -98,6 +99,24 @@ export function createNotebookController({
   const presentation = createPresentation();
   const lineNumbers = createLineNumbers(state);
 
+  // ===== Load notebook =====
+  function loadNotebook(cellDataArray) {
+    // Clear all cells
+    while (state.cells.length > 0) {
+      operations.deleteCell(state.cells[0].id, true);
+    }
+    // Insert each cell
+    cellDataArray.forEach((item, index) => {
+      const type = item.type || 'code';
+      const source = item.source || '';
+      operations.insertCellAt(index, source, { type });
+    });
+    if (state.cells.length > 0) {
+      selection.selectCell(state.cells[0].id);
+      state.cells[0].cm.focus();
+    }
+  }
+
   // ===== Public API =====
   return {
     insertCellAt: operations.insertCellAt,
@@ -114,7 +133,7 @@ export function createNotebookController({
     restartAndRunAll: () => { /* implemented in app.js */ },
     restartAndRunToSelected: () => { /* implemented in app.js */ },
     interruptKernel: () => { /* implemented in app.js */ },
-    loadNotebook: (sources) => { /* implemented in app.js */ },
+    loadNotebook,
     refreshAllEditors: () => state.cells.forEach(c => c.cm.refresh()),
     getSelectedId: () => state.selectedId,
     getEditingId: () => state.editingId,
@@ -134,5 +153,6 @@ export function createNotebookController({
     toggleLineNumbers: lineNumbers.toggle,
     togglePresentation: presentation.toggle,
     setStatus,
+    executeNextInQueue: execution.executeNextInQueue, // for operations.js
   };
 }

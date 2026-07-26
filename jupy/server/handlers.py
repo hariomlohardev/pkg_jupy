@@ -5,6 +5,7 @@ import threading
 import time
 import sys
 import subprocess
+import html
 from http.server import SimpleHTTPRequestHandler
 from jupy import __version__ as JUPY_VERSION
 from jupy.core import envmanager
@@ -17,7 +18,6 @@ STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "stat
 VENV_DIR = os.path.abspath(".jupy_env")
 VENV_BIN = os.path.join(VENV_DIR, "Scripts") if sys.platform == "win32" else os.path.join(VENV_DIR, "bin")
 
-# Lazy kernel import – with debug logging
 _kernel = None
 
 def get_kernel():
@@ -34,6 +34,12 @@ def get_kernel():
             traceback.print_exc()
             raise
     return _kernel
+
+def get_kernel_optional():
+    global _kernel
+    if _kernel is not None:
+        return _kernel
+    return None
 
 
 class JupyHTTPHandler(SimpleHTTPRequestHandler):
@@ -105,12 +111,11 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 success, error = envmanager.delete_global_env(name)
                 self._send_json({"success": success, "error": error, "global_envs": envmanager.list_global_envs()})
 
-            # ----- Export endpoints -----
             elif self.path == "/api/export/html":
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 notebook_json = data.get("notebook", {})
-                html = self._export_to_html(notebook_json)
-                self._send_json({"html": html})
+                html_out = self._export_to_html(notebook_json)
+                self._send_json({"html": html_out})
 
             elif self.path == "/api/export/py":
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
@@ -127,8 +132,8 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
             elif self.path == "/api/export/pdf":
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 notebook_json = data.get("notebook", {})
-                html = self._export_to_html(notebook_json, for_pdf=True)
-                self._send_json({"html": html})
+                html_out = self._export_to_html(notebook_json, for_pdf=True)
+                self._send_json({"html": html_out})
 
             else:
                 self.send_error(404, "Endpoint not found")
@@ -144,7 +149,6 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
         if self.headers.get("Upgrade", "").lower() == "websocket":
             ws_key = self.headers.get("Sec-WebSocket-Key")
             accept_key = make_ws_accept(ws_key)
-
             self.send_response(101)
             self.send_header("Upgrade", "websocket")
             self.send_header("Connection", "Upgrade")
@@ -160,7 +164,11 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
             return
 
         elif self.path == "/api/status":
-            self._send_json({"status": "ready", "exec_count": get_kernel().exec_count, "venv": get_kernel().env_info["path"]})
+            kernel = get_kernel_optional()
+            if kernel is None:
+                self._send_json({"status": "not_started", "exec_count": 0, "venv": "—"})
+            else:
+                self._send_json({"status": "ready", "exec_count": kernel.exec_count, "venv": kernel.env_info["path"]})
 
         elif self.path == "/api/pip/list":
             self._send_json({"packages": list_packages(get_kernel().python)})
@@ -190,7 +198,7 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
     # ----- Export methods -----
     def _export_to_html(self, notebook_json, for_pdf=False):
         cells = notebook_json.get("cells", [])
-        html = """<!DOCTYPE html>
+        html_content = """<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Exported Notebook</title>
 <style>
@@ -200,6 +208,16 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
 .cell-output { background: #fff; padding: 10px; border: 1px solid #ddd; margin-top: 5px; }
 .cell-markdown { font-family: sans-serif; }
 .plot-container { text-align: center; }
+"""
+        if for_pdf:
+            html_content += """
+@media print {
+  body { margin: 0.5in; }
+  .cell { page-break-after: always; }
+  .cell:last-child { page-break-after: auto; }
+}
+"""
+        html_content += """
 </style>
 </head>
 <body>
@@ -209,25 +227,30 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
             source = cell.get("source", "")
             outputs = cell.get("outputs", [])
             if cell_type == "markdown":
-                html += f'<div class="cell cell-markdown">{source}</div>'
+                safe_source = html.escape(source)
+                html_content += f'<div class="cell cell-markdown">{safe_source}</div>'
             else:
-                html += f'<div class="cell cell-code"><pre>{source}</pre>'
+                safe_source = html.escape(source)
+                html_content += f'<div class="cell cell-code"><pre>{safe_source}</pre>'
                 for out in outputs:
                     if out.get("kind") == "stdout":
-                        html += f'<div class="cell-output">{out["text"]}</div>'
+                        safe_text = html.escape(out.get("text", ""))
+                        html_content += f'<div class="cell-output">{safe_text}</div>'
                     elif out.get("kind") == "stderr":
-                        html += f'<div class="cell-output" style="color:red;">{out["text"]}</div>'
+                        safe_text = html.escape(out.get("text", ""))
+                        html_content += f'<div class="cell-output" style="color:red;">{safe_text}</div>'
                     elif out.get("kind") == "plot":
-                        html += f'<div class="cell-output plot-container">{out["text"]}</div>'
+                        html_content += f'<div class="cell-output plot-container">{out.get("text", "")}</div>'
                     elif out.get("kind") == "display":
                         data = out.get("data", {})
                         if "text/html" in data:
-                            html += f'<div class="cell-output">{data["text/html"]}</div>'
+                            html_content += f'<div class="cell-output">{data["text/html"]}</div>'
                         else:
-                            html += f'<div class="cell-output">{data.get("text/plain", str(data))}</div>'
-                html += '</div>'
-        html += "</body></html>"
-        return html
+                            safe_text = html.escape(data.get("text/plain", str(data)))
+                            html_content += f'<div class="cell-output">{safe_text}</div>'
+                html_content += '</div>'
+        html_content += "</body></html>"
+        return html_content
 
     def _export_to_py(self, notebook_json):
         cells = notebook_json.get("cells", [])
@@ -250,7 +273,6 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
     # ----- WebSocket handlers -----
     def handle_metrics_ws(self):
         ws_lock = threading.Lock()
-
         def stream_loop():
             while True:
                 try:
@@ -262,9 +284,7 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                     time.sleep(5.0)
                 except Exception:
                     break
-
         threading.Thread(target=stream_loop, daemon=True).start()
-
         while True:
             msg, opcode = parse_ws_frame(self.rfile)
             if opcode == 0x8 or msg is None:
@@ -272,7 +292,6 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
 
     def handle_run_ws(self):
         ws_lock = threading.Lock()
-
         def ws_send(data_dict):
             with ws_lock:
                 try:
@@ -282,14 +301,20 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 except Exception as e:
                     print(f"[Jupy] ws_send error: {e}", flush=True)
 
-        # Ensure kernel is imported and alive before accepting messages
         try:
             kernel = get_kernel()
             print("[Jupy] WebSocket run handler: kernel ready", flush=True)
         except Exception as e:
             print(f"[Jupy] WebSocket run handler: kernel failed to start: {e}", flush=True)
-            # Send an error message to the frontend if possible
-            # But we can't because we need to respond on WebSocket
+            try:
+                ws_send({"type": "error", "message": f"Kernel failed to start: {str(e)}"})
+            except:
+                pass
+            try:
+                self.wfile.write(make_ws_frame(json.dumps({"type": "error", "message": "Kernel unavailable"})))
+                self.wfile.flush()
+            except:
+                pass
             return
 
         while True:
@@ -314,9 +339,14 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 traceback.print_exc()
 
     def handle_terminal_ws(self):
+        kernel = get_kernel()
+        env_info = kernel.env_info
+        venv_dir = env_info["path"]
+        venv_bin = env_info["bin"]
+
         env = os.environ.copy()
-        env["VIRTUAL_ENV"] = VENV_DIR
-        env["PATH"] = VENV_BIN + os.path.pathsep + env.get("PATH", "")
+        env["VIRTUAL_ENV"] = venv_dir
+        env["PATH"] = venv_bin + os.path.pathsep + env.get("PATH", "")
 
         shell = ["cmd.exe", "/K"] if sys.platform == "win32" else [env.get("SHELL", "/bin/bash"), "-i"]
 

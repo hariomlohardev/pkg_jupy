@@ -3,7 +3,7 @@
 
 KERNEL_WORKER_SCRIPT = r"""
 import sys, io, ast, base64, json, traceback, builtins, warnings, re, keyword, importlib, threading
-import contextlib, time, os, subprocess, glob, shutil, tempfile, shlex
+import contextlib, time, os, subprocess, glob, shutil, tempfile, shlex, pdb
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 
 # ----------------------------------------------------------------------
@@ -129,8 +129,10 @@ _alias_dict = {}
 _bookmark_dict = {}
 _dir_stack = []
 _pdb_mode = False
-_xmode = 'Context'
+_xmode = 'Context'   # 'Plain', 'Context', 'Verbose'
 _float_precision = None
+_history_lines = []   # store executed cell sources
+_autoreload_enabled = False
 
 def _run_magic(line, cell, namespace):
     parts = line.strip().split()
@@ -178,9 +180,9 @@ def _run_magic(line, cell, namespace):
     elif magic_name == 'precision':
         return _magic_precision(args, cell, namespace)
     elif magic_name == 'config':
-        return "Configuration system not implemented."
+        return "Configuration system is not implemented in Jupy."
     elif magic_name == 'gui':
-        return "GUI event loop integration not implemented."
+        return "GUI event loop integration is not implemented."
     elif magic_name == 'load_ext':
         return _magic_load_ext(args, cell, namespace)
     elif magic_name == 'unload_ext':
@@ -214,7 +216,7 @@ def _run_magic(line, cell, namespace):
     elif magic_name == 'history':
         return _magic_history(args, cell, namespace)
     elif magic_name == 'debug':
-        return "Debugger not implemented. Use %pdb."
+        return "Debugger not implemented. Use %pdb (which is also limited in headless mode)."
     else:
         return f"Unknown magic: {magic_name}"
 
@@ -448,7 +450,7 @@ def _magic_pdb(args, cell, namespace):
     val = args[0].lower()
     if val in ('on', 'true', '1'):
         _pdb_mode = True
-        return "pdb mode ON"
+        return "pdb mode ON (post‑mortem debugging is not supported in headless kernel)"
     else:
         _pdb_mode = False
         return "pdb mode OFF"
@@ -568,33 +570,34 @@ def _magic_reset(args, cell, namespace):
 
 def _magic_matplotlib(args, cell, namespace):
     backend = args[0] if args else 'inline'
-    if backend == 'inline':
-        try:
-            import matplotlib
-            matplotlib.use('Agg')
+    try:
+        import matplotlib
+        matplotlib.use(backend, force=True)
+        if backend != 'inline':
+            return f"Matplotlib backend set to '{backend}'. Note: only 'inline' is fully supported in headless mode."
+        else:
             return "Matplotlib backend set to inline (Agg)."
-        except Exception as e:
-            return f"Error setting backend: {e}"
-    else:
-        return f"Unsupported backend: {backend}. Only 'inline' is implemented."
+    except Exception as e:
+        return f"Error setting backend: {e}"
 
-_autoreload_enabled = False
 def _magic_autoreload(args, cell, namespace):
     global _autoreload_enabled
     if args and args[0] == '2':
         _autoreload_enabled = True
-        return "Autoreload enabled (level 2)."
+        return "Autoreload enabled (level 2) – experimental, may be slow."
     elif args and args[0] == '0':
         _autoreload_enabled = False
         return "Autoreload disabled."
     else:
-        return f"Autoreload currently {'enabled' if _autoreload_enabled else 'disabled'}. Use %autoreload 2 to enable, %autoreload 0 to disable."
+        return f"Autoreload currently {'enabled' if _autoreload_enabled else 'disabled'}. Use %autoreload 2 to enable, %autoreload 0 to disable. (Experimental)"
 
 def _magic_run(args, cell, namespace):
     if not args:
         return "Usage: %run script.py [args]"
     filename = args[0]
     script_args = args[1:]
+    old_argv = sys.argv
+    sys.argv = [filename] + script_args
     try:
         with open(filename, 'r') as f:
             code = f.read()
@@ -602,6 +605,8 @@ def _magic_run(args, cell, namespace):
         return f"Executed {filename} successfully."
     except Exception as e:
         return f"Error running script: {e}"
+    finally:
+        sys.argv = old_argv
 
 def _magic_load(args, cell, namespace):
     if not args:
@@ -639,9 +644,11 @@ def _magic_store(args, cell, namespace):
         else:
             return f"Variable {var} not found in namespace."
 
-_magic_history = []
 def _magic_history(args, cell, namespace):
-    return "History:\n" + '\n'.join(_magic_history[-20:])
+    lines = _history_lines[-20:] if _history_lines else []
+    if not lines:
+        return "No history yet."
+    return "History:\n" + '\n'.join(f"{i+1}: {line}" for i, line in enumerate(lines))
 
 # ----------------------------------------------------------------------
 # Full ipywidgets system
@@ -694,6 +701,35 @@ class WidgetProxy:
                 for link in _links.values():
                     if link.source_id == self.id:
                         link.propagate(value)
+
+class OutputWidget(WidgetProxy):
+    def __init__(self, **kwargs):
+        super().__init__('Output', **kwargs)
+        self._capturing = False
+        self._original_stdout = sys.stdout
+        self._original_stderr = sys.stderr
+        self._captured_out = io.StringIO()
+        self._captured_err = io.StringIO()
+
+    def __enter__(self):
+        self._capturing = True
+        sys.stdout = self._captured_out
+        sys.stderr = self._captured_err
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._capturing = False
+        sys.stdout = self._original_stdout
+        sys.stderr = self._original_stderr
+        out = self._captured_out.getvalue()
+        err = self._captured_err.getvalue()
+        if out:
+            self._send_widget_event('output_stream', {'type': 'stdout', 'text': out})
+        if err:
+            self._send_widget_event('output_stream', {'type': 'stderr', 'text': err})
+        self._captured_out = io.StringIO()
+        self._captured_err = io.StringIO()
+        return False
 
 class Link:
     def __init__(self, source, target, transform=None, bidirectional=False):
@@ -802,7 +838,7 @@ def Box(**kwargs):
     return WidgetProxy('Box', **kwargs)
 
 def Output(**kwargs):
-    return WidgetProxy('Output', **kwargs)
+    return OutputWidget(**kwargs)
 
 def interact(func=None, **options):
     if func is None:
@@ -824,7 +860,10 @@ def interact(func=None, **options):
             display(VBox(children=list(widgets.values())))
         def wrapper(*args, **kwargs):
             kwargs = {name: w.kwargs.get('value') for name, w in widgets.items()}
-            return func(**kwargs)
+            result = func(**kwargs)
+            if result is not None:
+                display(result)
+            return result
         for w in widgets.values():
             w.observe(lambda _: wrapper(), 'value')
         return wrapper
@@ -881,7 +920,6 @@ def display(*objs, raw=False, **kwargs):
 
     obj = objs[0]
 
-    # 1. If it's already a MIME bundle dict
     if isinstance(obj, dict) and any(k in obj for k in ('text/html', 'text/plain', 'image/png', 'image/svg+xml')):
         for mime in ('image/png', 'image/jpeg', 'image/gif'):
             if mime in obj:
@@ -889,10 +927,8 @@ def display(*objs, raw=False, **kwargs):
         _send_display_data(obj)
         return
 
-    # 2. Try to get rich representations (including ipywidgets)
     mimebundle = {}
 
-    # 2a. Check for _repr_mimebundle_ (used by ipywidgets)
     if hasattr(obj, '_repr_mimebundle_'):
         try:
             bundle = obj._repr_mimebundle_()
@@ -904,7 +940,6 @@ def display(*objs, raw=False, **kwargs):
         except Exception:
             pass
 
-    # 2b. Individual _repr_*_ methods
     for fmt in ('html', 'svg', 'latex', 'markdown', 'json', 'png', 'jpeg', 'gif'):
         if fmt not in mimebundle:
             method = getattr(obj, f'_repr_{fmt}_', None)
@@ -916,7 +951,6 @@ def display(*objs, raw=False, **kwargs):
                 except Exception:
                     pass
 
-    # 2c. Pandas DataFrames
     if hasattr(obj, '_repr_html_'):
         try:
             html = obj._repr_html_()
@@ -925,26 +959,22 @@ def display(*objs, raw=False, **kwargs):
         except Exception:
             pass
 
-    # 2d. If nothing yet, try repr
     if not mimebundle:
         try:
             mimebundle['text/plain'] = repr(obj)
         except Exception:
             mimebundle['text/plain'] = str(obj)
 
-    # 2e. Encode binary image data
     for mime in ('image/png', 'image/jpeg', 'image/gif'):
         if mime in mimebundle:
             mimebundle[mime] = _encode_binary(mimebundle[mime])
 
-    # 2f. If raw=True, only send text/plain
     if raw:
         mimebundle = {'text/plain': mimebundle.get('text/plain', str(obj))}
 
     if mimebundle:
         _send_display_data(mimebundle)
 
-# Patch IPython.display.display
 def _patch_ipython_display():
     try:
         import IPython.display
@@ -952,12 +982,10 @@ def _patch_ipython_display():
     except ImportError:
         pass
 
-# Send ready marker, then patch IPython
 sys.stdout.write("---JUPY_KERNEL_READY---\n")
 sys.stdout.flush()
 _patch_ipython_display()
 
-# Matplotlib plot capture
 _matplotlib_backend_set = False
 def _capture_plots():
     global _matplotlib_backend_set
@@ -1014,7 +1042,7 @@ def _custom_input(prompt=""):
 builtins.input = _custom_input
 
 # ----------------------------------------------------------------------
-# Main execution loop
+# Main execution loop (fixed magic context)
 # ----------------------------------------------------------------------
 while True:
     line = sys.stdin.readline()
@@ -1046,7 +1074,7 @@ while True:
         elif action == "execute":
             code = data.get("code", "")
             lines = code.splitlines()
-            # Cell magic %%
+            # ---------- Cell magic %% ----------
             if lines and lines[0].startswith('%%'):
                 magic_line = lines[0]
                 cell_body = '\n'.join(lines[1:])
@@ -1061,7 +1089,9 @@ while True:
                 sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
                 sys.stdout.flush()
                 continue
-            # Line magic %
+
+            # ---------- Line magic % ----------
+            remaining_code = code
             if lines and lines[0].strip().startswith('%'):
                 magic_line = lines[0].strip()
                 result = _run_magic(magic_line, None, namespace)
@@ -1069,35 +1099,45 @@ while True:
                     sys.stdout.write("---JUPY_STDOUT---\n")
                     sys.stdout.write(result + "\n")
                 if len(lines) > 1:
-                    code = '\n'.join(lines[1:])
+                    remaining_code = '\n'.join(lines[1:])
                 else:
-                    code = ''
-                if not code:
+                    remaining_code = ''
+                if not remaining_code:
                     sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
                     sys.stdout.flush()
                     continue
-            # System command !
-            if lines and lines[0].strip().startswith('!'):
-                cmd = lines[0].strip()[1:]
-                try:
-                    proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
-                    if proc.stdout:
-                        sys.stdout.write("---JUPY_STDOUT---\n")
-                        sys.stdout.write(proc.stdout)
-                    if proc.stderr:
+                lines = remaining_code.splitlines()
+
+            # ---------- System command ! ----------
+            if remaining_code:
+                first_line = remaining_code.lstrip()
+                if first_line.startswith('!'):
+                    cmd_line = lines[0].strip()
+                    if cmd_line.startswith('!'):
+                        cmd = cmd_line[1:].strip()
+                    else:
+                        cmd = cmd_line
+                    try:
+                        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                        if proc.stdout:
+                            sys.stdout.write("---JUPY_STDOUT---\n")
+                            sys.stdout.write(proc.stdout)
+                        if proc.stderr:
+                            sys.stdout.write("---JUPY_STDERR---\n")
+                            sys.stdout.write(proc.stderr)
+                    except Exception as e:
                         sys.stdout.write("---JUPY_STDERR---\n")
-                        sys.stdout.write(proc.stderr)
-                except Exception as e:
-                    sys.stdout.write("---JUPY_STDERR---\n")
-                    sys.stdout.write(str(e) + "\n")
-                if len(lines) > 1:
-                    code = '\n'.join(lines[1:])
-                else:
-                    code = ''
-                if not code:
-                    sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
-                    sys.stdout.flush()
-                    continue
+                        sys.stdout.write(str(e) + "\n")
+                    remaining_code = '\n'.join(lines[1:]) if len(lines) > 1 else ''
+                    if not remaining_code:
+                        sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
+                        sys.stdout.flush()
+                        continue
+                    lines = remaining_code.splitlines()
+
+            # ---------- Record history ----------
+            if remaining_code:
+                _history_lines.append(remaining_code)
 
             # Patch IPython again (if imported later)
             _patch_ipython_display()
@@ -1105,17 +1145,19 @@ while True:
             # Autoreload
             if _autoreload_enabled:
                 for mod_name, mod in list(sys.modules.items()):
-                    if mod_name not in sys.builtin_module_names and not mod_name.startswith('_'):
+                    if (mod_name not in sys.builtin_module_names and
+                        not mod_name.startswith('_') and
+                        mod_name not in ('jupy', 'jupy.core', 'jupy.core.kernel')):
                         try:
                             importlib.reload(mod)
                         except:
                             pass
 
-            # Normal execution
+            # ---------- Normal Python execution ----------
             out, err = io.StringIO(), io.StringIO()
             try:
                 with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                    tree = ast.parse(code, mode="exec")
+                    tree = ast.parse(remaining_code, mode="exec")
                     if tree.body and isinstance(tree.body[-1], ast.Expr):
                         last = tree.body.pop()
                         if tree.body:
@@ -1124,9 +1166,15 @@ while True:
                         ast.copy_location(expr, last.value)
                         val = eval(compile(expr, "<cell>", "eval"), namespace)
                         if val is not None:
-                            sys.stdout.write(repr(val) + "\n")
+                            if _float_precision is not None:
+                                if isinstance(val, float):
+                                    sys.stdout.write(format(val, f'.{_float_precision}f') + "\n")
+                                else:
+                                    sys.stdout.write(repr(val) + "\n")
+                            else:
+                                sys.stdout.write(repr(val) + "\n")
                     else:
-                        exec(compile(code, "<cell>", "exec"), namespace)
+                        exec(compile(remaining_code, "<cell>", "exec"), namespace)
                     plots = _capture_plots()
                 stdout_val = out.getvalue()
                 stderr_val = err.getvalue()
@@ -1143,10 +1191,24 @@ while True:
                     sys.stdout.write("---JUPY_PLOTS_END---\n")
             except SyntaxError as e:
                 err_msg = "".join(traceback.format_exception_only(type(e), e))
+                if _xmode == 'Plain':
+                    err_msg = f"{type(e).__name__}: {e}"
+                elif _xmode == 'Context':
+                    err_msg = "".join(traceback.format_exception_only(type(e), e))
+                else:
+                    err_msg = "".join(traceback.format_exception_only(type(e), e))
                 sys.stdout.write(f"---JUPY_STDERR---\n{err_msg}\n")
             except Exception as e:
+                if _pdb_mode:
+                    sys.stdout.write("---JUPY_STDERR---\n")
+                    sys.stdout.write("pdb mode is ON, but post‑mortem debugging is not supported in headless kernel.\n")
                 tb = e.__traceback__.tb_next if e.__traceback__ else None
-                err_msg = "".join(traceback.format_exception(type(e), e, tb))
+                if _xmode == 'Plain':
+                    err_msg = f"{type(e).__name__}: {e}"
+                elif _xmode == 'Context':
+                    err_msg = "".join(traceback.format_exception(type(e), e, tb))
+                else:
+                    err_msg = "".join(traceback.format_exception(type(e), e, tb))
                 sys.stdout.write(f"---JUPY_STDERR---\n{err_msg}\n")
             sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
             sys.stdout.flush()

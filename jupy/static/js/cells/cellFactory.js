@@ -1,10 +1,6 @@
-/**
- * cells/cellFactory.js
- * Builds code, markdown, and raw cells with drag handle and line number support.
- */
 import { moveLineUp, moveLineDown, toggleComment } from './editorCommands.js';
 
-export function createCell(id, source, templates, hooks, registerAutocomplete) {
+export function createCell(id, source, templates, hooks, registerAutocomplete, type = 'code') {
   const { cellTemplate, insertBarTemplate } = templates;
 
   const frag = cellTemplate.content.cloneNode(true);
@@ -15,7 +11,6 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
   const outputEl = frag.querySelector('.cell-output');
   const toolbar = frag.querySelector('.cell-toolbar');
 
-  // Drag handle
   const dragHandle = frag.querySelector('.cell-drag-handle');
   if (dragHandle) {
     dragHandle.draggable = true;
@@ -33,7 +28,7 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
 
   const cell = {
     id,
-    type: 'code', // code, markdown, raw
+    type: type,
     execCount: null,
     outputs: [],
     isPreview: false,
@@ -41,12 +36,15 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
     cm: null,
   };
 
-  // Create CodeMirror instance
+  let mode = 'python';
+  if (type === 'markdown') mode = 'markdown';
+  else if (type === 'raw') mode = 'text';
+
   const cm = CodeMirror(editorHost, {
     value: source,
-    mode: 'python',
+    mode: mode,
     theme: 'brutalism',
-    lineNumbers: false, // toggled later
+    lineNumbers: false,
     viewportMargin: Infinity,
     indentUnit: 4,
     tabSize: 4,
@@ -79,15 +77,14 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
   });
   cell.cm = cm;
 
-  // For markdown, double-click to edit
   if (cell.type === 'markdown') {
     root.addEventListener('dblclick', () => setMarkdownEdit(cell));
   }
 
-  // Register autocomplete (pass cell ID for line offset)
-  registerAutocomplete(cm, cell.id);
+  if (type === 'code') {
+    registerAutocomplete(cm, cell.id);
+  }
 
-  // Notify on change
   cm.on('change', () => {
     if (hooks.onCellChange) hooks.onCellChange(cell.id);
   });
@@ -108,7 +105,6 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
     }
   });
 
-  // Toolbar actions
   toolbar.querySelector('[data-action="move-up"]').addEventListener('click', (e) => {
     e.stopPropagation();
     hooks.onMove(cell.id, -1);
@@ -122,12 +118,10 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
     hooks.onDelete(cell.id);
   });
 
-  // Insert bar
   insertBar.querySelector('.add-cell-btn').addEventListener('click', () => {
     hooks.onInsertAfter(cell.id);
   });
 
-  // Markdown helpers
   function renderMarkdown(cell) {
     if (cell.type !== 'markdown') return;
     const src = cell.cm.getValue();
@@ -144,7 +138,6 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
     const previewDiv = document.createElement('div');
     previewDiv.className = 'markdown-preview';
     previewDiv.innerHTML = html;
-    // Replace editor with preview
     editorHost.innerHTML = '';
     editorHost.appendChild(previewDiv);
     cell.isPreview = true;
@@ -155,7 +148,6 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
 
   function setMarkdownEdit(cell) {
     if (cell.type !== 'markdown') return;
-    // Restore CodeMirror editor
     editorHost.innerHTML = '';
     editorHost.appendChild(cm.getWrapperElement());
     cell.isPreview = false;
@@ -163,7 +155,6 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
     cm.focus();
   }
 
-  // Public method to toggle line numbers
   cell.toggleLineNumbers = (enabled) => {
     cm.setOption('lineNumbers', enabled);
   };
