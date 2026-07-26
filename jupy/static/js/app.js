@@ -1,6 +1,6 @@
 /**
  * app.js
- * Application entry point.
+ * Application entry point – now uses modular notebook controller.
  */
 import { initTheme } from './theme/theme.js';
 import { initMetricsStream } from './metrics/metrics.js';
@@ -9,11 +9,12 @@ import { createToaster } from './core/toast.js';
 import { setupTerminal } from './terminal/terminal.js';
 import { registerAutocomplete } from './autocomplete/autocomplete.js';
 import { initShortcuts } from './shortcuts/shortcuts.js';
-import { createNotebookController } from './notebook/notebookController.js';
+import { createNotebookController } from './notebook/controller.js'; // <-- new import
 import { downloadNotebook, parseNotebookFile, readFileAsText } from './notebook/notebookFile.js';
 import { initRuntimeMenu } from './runtime/runtimeMenu.js';
 import { initEnvTopbarMenu } from './env/envTopbarMenu.js';
 import { setupEnvManager } from './env/envManager.js';
+import { initWidgetManager } from './widgets/widgetManager.js';
 
 (() => {
   const container = document.getElementById('notebook');
@@ -86,8 +87,20 @@ import { setupEnvManager } from './env/envManager.js';
   let notebook = null;
   let reconnectToastShown = false;
 
+  // ======================================================================
+  // 1. Create the run socket
+  // ======================================================================
   const runSocket = new ReconnectingSocket('/ws/run', {
-    onMessage: (data) => notebook?.handleRunMessage(data),
+    onMessage: (data) => {
+      // Forward widget messages to the widget manager
+      if (data.type === 'widget') {
+        if (window.__jupy_widgetManager) {
+          window.__jupy_widgetManager.handleMessage(data.data);
+        }
+      } else {
+        notebook?.handleRunMessage(data);
+      }
+    },
     onOpen: () => {
       if (reconnectToastShown) {
         showToast('🔄 KERNEL RECONNECTED', 'success');
@@ -102,7 +115,16 @@ import { setupEnvManager } from './env/envManager.js';
     },
   });
 
-  // onCellChange callback to refresh outline when code changes
+  // ======================================================================
+  // 2. Initialize widget manager
+  // ======================================================================
+  const widgetManager = initWidgetManager(runSocket);
+  window.__jupy_widgetManager = widgetManager;
+  window.__jupy_runSocket = runSocket;
+
+  // ======================================================================
+  // 3. Create notebook controller
+  // ======================================================================
   const onCellChange = () => {
     if (envManager && typeof envManager.scheduleOutlineUpdate === 'function') {
       envManager.scheduleOutlineUpdate();
@@ -115,12 +137,14 @@ import { setupEnvManager } from './env/envManager.js';
     runSocket,
     showToast,
     registerAutocomplete,
-    onCellChange, // pass the callback
+    onCellChange,
   });
 
-  // Expose notebook globally for autocomplete and envManager
   window.__jupy_notebook = notebook;
 
+  // ======================================================================
+  // 4. Setup terminal, shortcuts, env manager, menus
+  // ======================================================================
   setupTerminal(
     terminalToggleBtn,
     terminalCloseBtn,
@@ -169,40 +193,62 @@ import { setupEnvManager } from './env/envManager.js';
     onResize: () => setTimeout(() => notebook.refreshAllEditors(), 50),
     onEnvSwitched: () => showToast('🔄 KERNEL RESTARTED ON NEW ENVIRONMENT', 'danger'),
   });
-  envManager.refreshStatus(); // populate the topbar ENV label on boot
+  envManager.refreshStatus();
 
-  // Monkey-patch notebook methods to trigger outline update on cell add/delete/move
-  const origInsert = notebook.insertCellAt;
-  notebook.insertCellAt = function(...args) {
-    const result = origInsert.apply(this, args);
-    envManager.scheduleOutlineUpdate();
-    return result;
-  };
-  const origDelete = notebook.deleteCell;
-  notebook.deleteCell = function(...args) {
-    const result = origDelete.apply(this, args);
-    envManager.scheduleOutlineUpdate();
-    return result;
-  };
-  const origMove = notebook.moveCell;
-  notebook.moveCell = function(...args) {
-    const result = origMove.apply(this, args);
-    envManager.scheduleOutlineUpdate();
-    return result;
-  };
-
-  initRuntimeMenu({
-    menu: runtimeMenu,
-    trigger: runtimeMenuTrigger,
-    dropdown: runtimeMenuDropdown,
-    notebook,
+  // ======================================================================
+  // 5. Wire up toolbar buttons (use new notebook methods)
+  // ======================================================================
+  document.getElementById('btn-undo')?.addEventListener('click', () => notebook.undo());
+  document.getElementById('btn-redo')?.addEventListener('click', () => notebook.redo());
+  document.getElementById('btn-merge')?.addEventListener('click', () => notebook.mergeSelectedCells());
+  document.getElementById('btn-split')?.addEventListener('click', () => {
+    const id = notebook.getSelectedId();
+    if (id) notebook.splitCellAtCursor(id);
   });
+  document.getElementById('btn-find')?.addEventListener('click', () => toggleFindBar());
+  document.getElementById('btn-line-numbers')?.addEventListener('click', () => notebook.toggleLineNumbers());
+  document.getElementById('btn-presentation')?.addEventListener('click', () => notebook.togglePresentation());
 
-  initEnvTopbarMenu({
-    menu: envTopbarMenu,
-    trigger: envTopbarMenuTrigger,
-    dropdown: envTopbarMenuDropdown,
-    envManager,
+  // Find bar logic
+  let findBarVisible = false;
+  function toggleFindBar() {
+    const bar = document.getElementById('find-bar');
+    if (bar) {
+      findBarVisible = !findBarVisible;
+      bar.style.display = findBarVisible ? 'flex' : 'none';
+      if (findBarVisible) {
+        const input = document.getElementById('find-input');
+        if (input) setTimeout(() => input.focus(), 50);
+      }
+    }
+  }
+
+  // Find bar buttons
+  document.getElementById('find-close')?.addEventListener('click', toggleFindBar);
+  document.getElementById('find-next')?.addEventListener('click', () => {
+    const search = document.getElementById('find-input')?.value;
+    if (search) {
+      const results = notebook.findInNotebook(search);
+      if (results.length > 0) {
+        const first = results[0];
+        notebook.selectCell(notebook.getCells()[first.cellIdx].id);
+        notebook.enterEditMode(notebook.getCells()[first.cellIdx].id);
+        const cm = notebook.getCells()[first.cellIdx].cm;
+        cm.focus();
+        cm.setCursor({ line: first.line, ch: 0 });
+        showToast(`Found ${results.length} matches`, 'success');
+      } else {
+        showToast('No matches found', 'warning');
+      }
+    }
+  });
+  document.getElementById('find-replace-all')?.addEventListener('click', () => {
+    const search = document.getElementById('find-input')?.value;
+    const replace = document.getElementById('replace-input')?.value;
+    if (search) {
+      const count = notebook.replaceInNotebook(search, replace);
+      showToast(`Replaced ${count} occurrences`, 'success');
+    }
   });
 
   runAllBtn.addEventListener('click', () => notebook.runAll());
@@ -237,6 +283,49 @@ import { setupEnvManager } from './env/envManager.js';
     }
   });
 
+  // Restart / interrupt hooks (if not already in notebook)
+  notebook.restartKernel = async function() {
+    try {
+      const res = await fetch('/api/restart', { method: 'POST' });
+      if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+      this.getCells().forEach((c) => {
+        c.execCount = null;
+        c.dom.execCountEl.textContent = '[\u00A0]';
+        // clear output
+        const output = c.dom.outputEl;
+        output.hidden = true;
+        output.innerHTML = '';
+      });
+      showToast('🔄 KERNEL RESTARTED', 'danger');
+      return true;
+    } catch (err) {
+      showToast('⚠️ FAILED TO RESTART KERNEL', 'danger');
+      return false;
+    }
+  };
+  notebook.restartAndRunAll = async function() {
+    const ok = await this.restartKernel();
+    if (ok) this.runAll();
+  };
+  notebook.restartAndRunToSelected = async function() {
+    const ok = await this.restartKernel();
+    if (ok) {
+      const targetIdx = this.getSelectedId() ? this.getCells().findIndex(c => c.id === this.getSelectedId()) : -1;
+      if (targetIdx === -1) {
+        this.runAll();
+      } else {
+        this.getCells().slice(0, targetIdx + 1).forEach(c => this.runCell(c.id, { advance: false }));
+      }
+    }
+  };
+  notebook.interruptKernel = function() {
+    if (runSocket.isOpen) {
+      runSocket.send({ action: 'interrupt' });
+      showToast('⏹ EXECUTION INTERRUPTED', 'danger');
+    }
+  };
+
+  // Load default notebook
   notebook.insertCellAt(0, [
     '# JUPY - COLAB & JUPYTER SHORTCUTS INTEGRATION',
     '# Press Ctrl + Shift + ? to open the Help Dialog!',
@@ -244,4 +333,19 @@ import { setupEnvManager } from './env/envManager.js';
     'import time',
     'print("Press Ctrl + Shift + ? to view all keyboard shortcuts!")',
   ].join('\n'));
+
+  // Initialize runtime menu with notebook methods
+  initRuntimeMenu({
+    menu: runtimeMenu,
+    trigger: runtimeMenuTrigger,
+    dropdown: runtimeMenuDropdown,
+    notebook,
+  });
+
+  initEnvTopbarMenu({
+    menu: envTopbarMenu,
+    trigger: envTopbarMenuTrigger,
+    dropdown: envTopbarMenuDropdown,
+    envManager,
+  });
 })();

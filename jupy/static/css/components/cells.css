@@ -409,3 +409,42 @@
 .display-data-container video, .display-data-container audio {
   max-width: 100%;
 }
+
+/* Drag handle */
+.cell-drag-handle {
+  cursor: grab;
+  opacity: 0.3;
+  font-size: 1.2rem;
+  line-height: 1;
+  user-select: none;
+  padding: 0 4px;
+}
+.cell-drag-handle:hover { opacity: 1; }
+
+/* Selected cells */
+.cell.selected {
+  outline: 3px solid var(--color-secondary);
+}
+
+/* Presentation mode */
+body.presentation-mode .topbar,
+body.presentation-mode .system-bar-wrapper,
+body.presentation-mode .env-manager-panel,
+body.presentation-mode .terminal-panel {
+  display: none !important;
+}
+body.presentation-mode .notebook-panel {
+  background: #fff;
+  transform: scale(0.8);
+  transform-origin: top left;
+}
+body.presentation-mode .cell {
+  border: 1px solid #ccc;
+  box-shadow: none;
+}
+
+/* Find bar */
+#find-bar input {
+  background: var(--color-surface);
+  color: var(--color-text);
+}

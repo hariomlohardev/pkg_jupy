@@ -8,7 +8,7 @@ import subprocess
 from http.server import SimpleHTTPRequestHandler
 from jupy import __version__ as JUPY_VERSION
 from jupy.core import envmanager
-from jupy.core.kernel import kernel
+from jupy.core.kernel import kernel   # same, but now imports from package
 from jupy.core.metrics import get_system_metrics
 from jupy.core.terminal import TerminalSession
 from jupy.core.venv import get_python_version, install_package, list_packages, uninstall_package

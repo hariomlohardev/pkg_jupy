@@ -1,0 +1,1 @@
+export function initVariableInspector() { console.warn('Variable inspector not implemented'); }

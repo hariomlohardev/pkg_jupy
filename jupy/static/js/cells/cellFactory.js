@@ -1,6 +1,6 @@
 /**
  * cells/cellFactory.js
- * Builds code, markdown, and raw cells.
+ * Builds code, markdown, and raw cells with drag handle and line number support.
  */
 import { moveLineUp, moveLineDown, toggleComment } from './editorCommands.js';
 
@@ -15,6 +15,19 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
   const outputEl = frag.querySelector('.cell-output');
   const toolbar = frag.querySelector('.cell-toolbar');
 
+  // Drag handle
+  const dragHandle = frag.querySelector('.cell-drag-handle');
+  if (dragHandle) {
+    dragHandle.draggable = true;
+    dragHandle.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', id);
+      if (hooks.onDragStart) hooks.onDragStart(id, e);
+    });
+    dragHandle.addEventListener('dragend', (e) => {
+      if (hooks.onDragEnd) hooks.onDragEnd(e);
+    });
+  }
+
   const barFrag = insertBarTemplate.content.cloneNode(true);
   const insertBar = barFrag.querySelector('.insert-bar');
 
@@ -23,18 +36,17 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
     type: 'code', // code, markdown, raw
     execCount: null,
     outputs: [],
-    isPreview: false, // for markdown cells
-    dom: { root, runBtn, execCountEl, editorHost, outputEl, toolbar, insertBar },
+    isPreview: false,
+    dom: { root, runBtn, execCountEl, editorHost, outputEl, toolbar, insertBar, dragHandle },
     cm: null,
   };
 
-  // Setup CodeMirror with appropriate mode
-  const mode = 'python'; // default
+  // Create CodeMirror instance
   const cm = CodeMirror(editorHost, {
     value: source,
-    mode: mode,
+    mode: 'python',
     theme: 'brutalism',
-    lineNumbers: false,
+    lineNumbers: false, // toggled later
     viewportMargin: Infinity,
     indentUnit: 4,
     tabSize: 4,
@@ -43,19 +55,17 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
     extraKeys: {
       'Shift-Enter': (editor) => {
         if (cell.type === 'markdown') {
-          // Render markdown preview
           renderMarkdown(cell);
           hooks.onRun(cell.id, { advance: true });
         } else {
           hooks.onRun(cell.id, { advance: true });
         }
       },
-      'Ctrl-Enter': (editor) => { /* ... */ },
-      'Cmd-Enter': (editor) => { /* ... */ },
-      'Alt-Enter': (editor) => { /* ... */ },
+      'Ctrl-Enter': (editor) => { editor.state.completionActive?.close(); hooks.onRun(cell.id, { advance: false }); },
+      'Cmd-Enter': (editor) => { editor.state.completionActive?.close(); hooks.onRun(cell.id, { advance: false }); },
+      'Alt-Enter': (editor) => { editor.state.completionActive?.close(); hooks.onRun(cell.id, { insertBelow: true }); },
       Esc: () => {
         if (cell.type === 'markdown' && cell.isPreview) {
-          // Exit preview to edit mode
           setMarkdownEdit(cell);
         } else {
           hooks.onExitEdit(cell.id);
@@ -69,13 +79,12 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
   });
   cell.cm = cm;
 
-  // For markdown, we may want a different keymap to toggle preview
+  // For markdown, double-click to edit
   if (cell.type === 'markdown') {
-    // Add double-click to edit
     root.addEventListener('dblclick', () => setMarkdownEdit(cell));
   }
 
-  // Hover/autocomplete registration (pass cellId)
+  // Register autocomplete (pass cell ID for line offset)
   registerAutocomplete(cm, cell.id);
 
   // Notify on change
@@ -85,20 +94,21 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
 
   cm.on('focus', () => hooks.onEnterEdit(cell.id));
   root.addEventListener('click', (e) => {
-    if (!editorHost.contains(e.target)) hooks.onSelect(cell.id);
+    if (!editorHost.contains(e.target) && !dragHandle?.contains(e.target)) {
+      hooks.onSelect(cell.id);
+    }
   });
 
   runBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     if (cell.type === 'markdown' && cell.isPreview) {
-      // Re-render preview
       renderMarkdown(cell);
     } else {
       hooks.onRunButtonClick(cell.id);
     }
   });
 
-  // Toolbar buttons
+  // Toolbar actions
   toolbar.querySelector('[data-action="move-up"]').addEventListener('click', (e) => {
     e.stopPropagation();
     hooks.onMove(cell.id, -1);
@@ -111,13 +121,13 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
     e.stopPropagation();
     hooks.onDelete(cell.id);
   });
-  // Add a cell type switcher? We'll add a dropdown in toolbar later.
 
+  // Insert bar
   insertBar.querySelector('.add-cell-btn').addEventListener('click', () => {
     hooks.onInsertAfter(cell.id);
   });
 
-  // Helpers for markdown
+  // Markdown helpers
   function renderMarkdown(cell) {
     if (cell.type !== 'markdown') return;
     const src = cell.cm.getValue();
@@ -125,14 +135,12 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
       setMarkdownEdit(cell);
       return;
     }
-    // Render with marked
     let html = '';
     if (window.marked) {
       html = window.marked.parse(src);
     } else {
       html = `<pre>${src}</pre>`;
     }
-    // Inject MathJax rendering later
     const previewDiv = document.createElement('div');
     previewDiv.className = 'markdown-preview';
     previewDiv.innerHTML = html;
@@ -140,41 +148,25 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
     editorHost.innerHTML = '';
     editorHost.appendChild(previewDiv);
     cell.isPreview = true;
-    // Trigger MathJax
     if (window.MathJax) {
       MathJax.typesetPromise([previewDiv]).catch(() => {});
     }
-    // Add heading collapsing
-    addHeadingCollapse(previewDiv);
   }
 
   function setMarkdownEdit(cell) {
     if (cell.type !== 'markdown') return;
     // Restore CodeMirror editor
     editorHost.innerHTML = '';
-    // Re-append the cm element (cm.getWrapperElement() is already in DOM)
-    // We need to re-attach the CodeMirror instance
-    // Since we removed it, we need to recreate or re-attach.
-    // Simpler: we can hide preview and show the original editor.
-    // Better: we can detach the cm wrapper and re-attach.
-    // We'll just toggle visibility: we'll have both elements.
-    // For simplicity, we'll keep both and toggle display.
-    // In this version, we'll recreate the cm.
-    // But we already have cm; we can just reinsert it.
-    // Instead, we'll replace the innerHTML with the cm wrapper.
-    // We'll store the cm wrapper reference.
-    const wrapper = cell.cm.getWrapperElement();
-    editorHost.appendChild(wrapper);
+    editorHost.appendChild(cm.getWrapperElement());
     cell.isPreview = false;
-    cell.cm.refresh();
-    cell.cm.focus();
+    cm.refresh();
+    cm.focus();
   }
 
-  function addHeadingCollapse(container) {
-    // Find all headings (h1-h6) and wrap following content until next heading of same or higher level
-    // We'll use a simple recursive function.
-    // Not implemented fully here.
-  }
+  // Public method to toggle line numbers
+  cell.toggleLineNumbers = (enabled) => {
+    cm.setOption('lineNumbers', enabled);
+  };
 
   return cell;
 }

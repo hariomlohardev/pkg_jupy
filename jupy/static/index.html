@@ -12,13 +12,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css" />
 
-<link rel="stylesheet" href="css/main.css" />
-
-<!-- Markdown parser -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
-<!-- DOMPurify for HTML sanitization -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.4/purify.min.js"></script>
-<!-- MathJax for LaTeX -->
+<!-- MathJax, marked, DOMPurify for markdown & rich outputs -->
 <script>
   window.MathJax = {
     tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] },
@@ -26,6 +20,10 @@
   };
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.js" async></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.4/purify.min.js"></script>
+
+<link rel="stylesheet" href="css/main.css" />
 </head>
 <body>
 
@@ -38,6 +36,7 @@
   </div>
 
   <div class="menu-block">
+    <!-- RUNTIME Menu -->
     <div class="runtime-menu" id="runtime-menu">
       <button class="runtime-menu-trigger" id="runtime-menu-trigger" aria-haspopup="true" aria-expanded="false">
         RUNTIME
@@ -56,6 +55,7 @@
       </div>
     </div>
 
+    <!-- ENVIRONMENT Menu -->
     <div class="runtime-menu" id="env-topbar-menu">
       <button class="runtime-menu-trigger" id="env-topbar-menu-trigger" aria-haspopup="true" aria-expanded="false">
         ENVIRONMENT
@@ -77,17 +77,6 @@
       </div>
     </div>
   </div>
-  <!-- VIEW: OUTLINE -->
-  <!-- VIEW: OUTLINE -->
-  <div class="env-view" id="env-view-outline" hidden>
-    <section class="env-section env-section-grow">
-      <h3>📋 OUTLINE</h3>
-      <div style="font-size:0.7rem;opacity:0.7;margin-bottom:6px;">Functions &amp; classes in your notebook</div>
-      <div class="outline-list" id="outline-list" style="flex:1;overflow-y:auto;max-height:400px;">
-        <div class="pip-manager-empty">No functions or classes found.</div>
-      </div>
-    </section>
-  </div>
 
   <div class="title-block">
     <div class="filename-wrapper">
@@ -95,13 +84,22 @@
     </div>
     <span class="status" id="status">
       <span class="status-indicator"></span>
-      <span id="env-status-label">ENV: READY</span>
+      <span id="status-label">IDLE</span>
+      <span id="last-exec-time" style="font-size:0.6rem; opacity:0.6; margin-left:6px;"></span>
     </span>
   </div>
 
   <div class="spacer"></div>
 
   <div class="topbar-actions">
+    <span id="selection-info" style="font-family:var(--font-mono); font-size:0.7rem; min-width:60px;"></span>
+    <button class="btn btn-secondary" id="btn-undo" title="Undo (Ctrl+Z)">↩</button>
+    <button class="btn btn-secondary" id="btn-redo" title="Redo (Ctrl+Y)">↪</button>
+    <button class="btn btn-secondary" id="btn-merge" title="Merge selected cells (Ctrl+Shift+M)">⊞</button>
+    <button class="btn btn-secondary" id="btn-split" title="Split cell (Ctrl+Shift+-)">⊟</button>
+    <button class="btn btn-secondary" id="btn-find" title="Find (Ctrl+F)">🔍</button>
+    <button class="btn btn-secondary" id="btn-line-numbers" title="Toggle line numbers (Ctrl+Shift+L)">#</button>
+    <button class="btn btn-secondary" id="btn-presentation" title="Presentation mode (Ctrl+Shift+P)">⛶</button>
     <button class="btn btn-warning" id="btn-terminal-toggle">📟 TERMINAL</button>
     <button class="btn btn-secondary" id="btn-theme-toggle" title="Toggle Light/Dark Theme">☀ DARK</button>
     <input type="file" id="file-input" accept=".ipynb" hidden />
@@ -112,15 +110,14 @@
 </header>
 
 <div class="app-workspace" id="app-workspace">
-  <!-- Far-Left Split Environment Manager (Hidden by Default) -->
+  <!-- Environment Manager Panel (Left) -->
   <aside class="env-manager-panel" id="env-manager-panel" hidden>
     <div class="env-manager-header">
       <span class="env-manager-title" id="env-manager-title-text">📦 ENVIRONMENT</span>
       <button class="action-btn action-danger" id="btn-env-manager-close" title="Close">✕</button>
     </div>
     <div class="env-manager-body">
-
-      <!-- VIEW: CURRENT ENVIRONMENT -->
+      <!-- views: current, create, pip, outline -->
       <div class="env-view" id="env-view-current">
         <section class="env-section">
           <h3>ACTIVE ENVIRONMENT</h3>
@@ -142,7 +139,6 @@
           <button class="btn btn-primary" id="btn-env-apply">SWITCH ENVIRONMENT</button>
           <div class="env-status-line" id="env-status-line"></div>
         </section>
-
         <section class="env-section">
           <h3>DETAILS</h3>
           <div class="about-row"><span>Jupy Version</span><span id="env-jupy-version">—</span></div>
@@ -152,8 +148,6 @@
           <div class="about-row"><span>Packages</span><span id="env-package-count">—</span></div>
         </section>
       </div>
-
-      <!-- VIEW: CREATE ENVIRONMENT -->
       <div class="env-view" id="env-view-create" hidden>
         <section class="env-section">
           <h3>CREATE NEW ENVIRONMENT</h3>
@@ -165,8 +159,6 @@
           <div class="about-row"><span>Existing Envs</span><span id="env-existing-list">—</span></div>
         </section>
       </div>
-
-      <!-- VIEW: PIP MANAGER -->
       <div class="env-view" id="env-view-pip" hidden>
         <section class="env-section env-section-grow">
           <h3>PACKAGES</h3>
@@ -183,7 +175,15 @@
           </div>
         </section>
       </div>
-
+      <div class="env-view" id="env-view-outline" hidden>
+        <section class="env-section env-section-grow">
+          <h3>📋 OUTLINE</h3>
+          <div style="font-size:0.7rem;opacity:0.7;margin-bottom:6px;">Functions &amp; classes in your notebook</div>
+          <div class="outline-list" id="outline-list" style="flex:1;overflow-y:auto;max-height:400px;">
+            <div class="pip-manager-empty">No functions or classes found.</div>
+          </div>
+        </section>
+      </div>
     </div>
   </aside>
 
@@ -210,6 +210,15 @@
   </aside>
 </div>
 
+<!-- Find / Replace Bar -->
+<div id="find-bar" style="display:none; position:fixed; bottom:60px; left:50%; transform:translateX(-50%); background:var(--color-surface); border:var(--border-thick); padding:6px 12px; border-radius:var(--rounded-sm); box-shadow:var(--shadow-brutal); z-index:9999; gap:8px; align-items:center;">
+  <input id="find-input" type="text" placeholder="Find..." style="border:var(--border-thick); padding:2px 6px; font-family:var(--font-mono); background:var(--color-surface); color:var(--color-text);">
+  <input id="replace-input" type="text" placeholder="Replace..." style="border:var(--border-thick); padding:2px 6px; font-family:var(--font-mono); background:var(--color-surface); color:var(--color-text);">
+  <button id="find-next" class="btn btn-secondary">Next</button>
+  <button id="find-replace-all" class="btn btn-primary">Replace All</button>
+  <button id="find-close" class="action-btn">✕</button>
+</div>
+
 <footer class="system-bar-wrapper">
   <div class="system-bar" id="system-bar">
     <div class="sys-item">
@@ -232,8 +241,10 @@
   </div>
 </footer>
 
+<!-- Templates -->
 <template id="cell-template">
-  <div class="cell" tabindex="-1">
+  <div class="cell" tabindex="-1" data-cell-id="{{id}}">
+    <div class="cell-drag-handle" title="Drag to reorder">⠿</div>
     <div class="cell-gutter">
       <button class="run-btn" title="Run cell (Shift+Enter)">▶</button>
       <div class="exec-count">[&nbsp;]</div>
@@ -257,11 +268,14 @@
   </div>
 </template>
 
+<!-- CodeMirror and App -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/markdown/markdown.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
-<script type="module" src="js/app.js"></script>
 
+<!-- Main App -->
+<script type="module" src="js/app.js"></script>
 </body>
 </html>

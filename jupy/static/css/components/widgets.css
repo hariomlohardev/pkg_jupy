@@ -1,0 +1,63 @@
+/* widgets.css */
+.widget-integer-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+.widget-integer-slider .widget-label {
+  font-weight: 700;
+  min-width: 80px;
+}
+.widget-integer-slider input[type="range"] {
+  flex: 1;
+}
+.widget-integer-slider .widget-value {
+  min-width: 30px;
+  font-family: var(--font-mono);
+}
+
+.widget-button {
+  padding: 4px 12px;
+  border: var(--border-thick);
+  background: var(--color-secondary);
+  color: #111827;
+  font-weight: 700;
+  cursor: pointer;
+}
+.widget-button:hover {
+  background: var(--color-primary);
+  color: #FFFFFF;
+}
+
+.widget-vbox, .widget-hbox {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+}
+.widget-vbox {
+  flex-direction: column;
+}
+.widget-hbox {
+  flex-direction: row;
+}
+
+.widget-output {
+  padding: 4px 8px;
+  background: var(--color-bg-well);
+  border: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  min-height: 40px;
+}
+
+.widget-text input {
+  border: var(--border-thick);
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.widget-container {
+  margin: 4px 0;
+}

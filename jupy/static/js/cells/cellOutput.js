@@ -4,6 +4,7 @@
  */
 import { MAX_CELL_OUTPUT_LINES } from '../config/constants.js';
 
+
 export function clearCellOutput(cell) {
   cell.outputs = [];
   cell.dom.outputEl.hidden = true;
@@ -43,16 +44,19 @@ export function appendCellPlot(cell, htmlString) {
  * @param {object} cell
  * @param {object} mimeData - dictionary with MIME types as keys
  */
+
+
+/**
+ * Render rich display data (from IPython.display, etc.)
+ */
 export function appendDisplayData(cell, mimeData) {
   cell.dom.outputEl.hidden = false;
   const container = document.createElement('div');
   container.className = 'display-data-container';
 
-  // Prioritize: HTML > SVG > LaTeX > DataFrame > plain text
   let rendered = false;
 
   if (mimeData['text/html']) {
-    // Sanitize HTML with DOMPurify (if available)
     let html = mimeData['text/html'];
     if (window.DOMPurify) {
       html = window.DOMPurify.sanitize(html, { SAFE_FOR_JQUERY: true });
@@ -64,49 +68,56 @@ export function appendDisplayData(cell, mimeData) {
     container.innerHTML = `<svg style="max-width:100%;">${svg}</svg>`;
     rendered = true;
   } else if (mimeData['text/latex']) {
-    // Render LaTeX via MathJax
     const latex = mimeData['text/latex'];
-    container.innerHTML = `$$${latex}$$`; // double dollars for display math
-    // We'll trigger MathJax typesetting later
+    container.innerHTML = `$$${latex}$$`;
     rendered = true;
-  } else if (mimeData['application/vnd.dataresource+json'] || mimeData['text/html']) {
-    // For DataFrames, they usually produce text/html, but we can handle
-    // DataFrame-specific if needed.
-    // Already covered by text/html branch.
+    if (window.MathJax) {
+      MathJax.typesetPromise([container]).catch(() => {});
+    }
   } else if (mimeData['video/mp4']) {
-    const url = mimeData['video/mp4'];
-    container.innerHTML = `<video controls style="max-width:100%;"><source src="${url}" type="video/mp4"></video>`;
+    container.innerHTML = `<video controls style="max-width:100%;"><source src="${mimeData['video/mp4']}" type="video/mp4"></video>`;
     rendered = true;
   } else if (mimeData['audio/mpeg']) {
-    const url = mimeData['audio/mpeg'];
-    container.innerHTML = `<audio controls style="max-width:100%;"><source src="${url}" type="audio/mpeg"></audio>`;
+    container.innerHTML = `<audio controls style="max-width:100%;"><source src="${mimeData['audio/mpeg']}" type="audio/mpeg"></audio>`;
     rendered = true;
   }
 
-  // If nothing rich, fallback to plain text
   if (!rendered && mimeData['text/plain']) {
     container.textContent = mimeData['text/plain'];
+    rendered = true;
   }
 
-  // If still nothing, show a placeholder
   if (!rendered) {
     container.textContent = '(Display data with unknown format)';
   }
 
   cell.dom.outputEl.appendChild(container);
   cell.outputs.push({ kind: 'display', data: mimeData });
-
-  // If LaTeX was rendered, trigger MathJax
-  if (mimeData['text/latex'] && window.MathJax) {
-    MathJax.typesetPromise([container]).catch(() => {});
-  }
-
-  // If HTML contains scripts or interactive content, we might need to execute them
-  // For Plotly, we can detect and call Plotly.react later.
-
   scrollToBottom(cell);
-  trimOutputLines(cell);
 }
+
+/**
+ * Render a widget (from ipywidgets)
+ */
+export function appendWidget(cell, widgetData) {
+  cell.dom.outputEl.hidden = false;
+  const container = document.createElement('div');
+  container.className = 'widget-container';
+  if (window.__jupy_widgetManager) {
+    window.__jupy_widgetManager.renderWidget(widgetData, container);
+  } else {
+    container.textContent = 'Widget manager not available';
+  }
+  cell.dom.outputEl.appendChild(container);
+  cell.outputs.push({ kind: 'widget', data: widgetData });
+}
+
+function scrollToBottom(cell) {
+  requestAnimationFrame(() => {
+    cell.dom.outputEl.scrollTop = cell.dom.outputEl.scrollHeight;
+  });
+}
+
 
 function trimOutputLines(cell) {
   const spans = cell.dom.outputEl.querySelectorAll('span');
@@ -175,3 +186,13 @@ export function appendCellStdinPrompt(cell, promptText, onSubmit) {
     input.focus();
   });
 }
+
+
+
+
+/**
+ * cells/cellOutput.js
+ * Rendering of cell outputs (text, plots, rich display data, widgets).
+ */
+
+// ... existing functions (clearCellOutput, appendCellOutput, appendCellPlot, appendCellStdinPrompt) ...

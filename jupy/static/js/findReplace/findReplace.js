@@ -1,0 +1,1 @@
+export function initFindBar() { console.warn('Find/Replace not fully implemented'); }
