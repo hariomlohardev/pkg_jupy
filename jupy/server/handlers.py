@@ -8,7 +8,6 @@ import subprocess
 from http.server import SimpleHTTPRequestHandler
 from jupy import __version__ as JUPY_VERSION
 from jupy.core import envmanager
-from jupy.core.kernel import kernel
 from jupy.core.metrics import get_system_metrics
 from jupy.core.terminal import TerminalSession
 from jupy.core.venv import get_python_version, install_package, list_packages, uninstall_package
@@ -17,6 +16,24 @@ from jupy.server.protocol import make_ws_accept, make_ws_frame, parse_ws_frame
 STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
 VENV_DIR = os.path.abspath(".jupy_env")
 VENV_BIN = os.path.join(VENV_DIR, "Scripts") if sys.platform == "win32" else os.path.join(VENV_DIR, "bin")
+
+# Lazy kernel import – with debug logging
+_kernel = None
+
+def get_kernel():
+    global _kernel
+    if _kernel is None:
+        print("[Jupy] Importing kernel for the first time...", flush=True)
+        try:
+            from jupy.core.kernel import kernel
+            _kernel = kernel
+            print("[Jupy] Kernel imported successfully.", flush=True)
+        except Exception as e:
+            print(f"[Jupy] ERROR importing kernel: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            raise
+    return _kernel
 
 
 class JupyHTTPHandler(SimpleHTTPRequestHandler):
@@ -33,7 +50,7 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 code = data.get("code", "")
                 line = data.get("line", 1)
                 col = data.get("column", 0)
-                comps = kernel.get_completions(code, line, col)
+                comps = get_kernel().get_completions(code, line, col)
                 self._send_json({"completions": comps})
 
             elif self.path == "/api/hover":
@@ -41,31 +58,31 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 code = data.get("code", "")
                 line = data.get("line", 1)
                 col = data.get("column", 0)
-                info = kernel.get_hover(code, line, col)
+                info = get_kernel().get_hover(code, line, col)
                 self._send_json({"hover": info})
 
             elif self.path == "/api/restart":
-                kernel.restart()
-                self._send_json({"status": "restarted", "exec_count": kernel.exec_count})
+                get_kernel().restart()
+                self._send_json({"status": "restarted", "exec_count": get_kernel().exec_count})
 
             elif self.path == "/api/pip/install":
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 name = data.get("name", "")
-                success, output = install_package(kernel.python, name)
-                self._send_json({"success": success, "output": output, "packages": list_packages(kernel.python)})
+                success, output = install_package(get_kernel().python, name)
+                self._send_json({"success": success, "output": output, "packages": list_packages(get_kernel().python)})
 
             elif self.path == "/api/pip/uninstall":
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 name = data.get("name", "")
-                success, output = uninstall_package(kernel.python, name)
-                self._send_json({"success": success, "output": output, "packages": list_packages(kernel.python)})
+                success, output = uninstall_package(get_kernel().python, name)
+                self._send_json({"success": success, "output": output, "packages": list_packages(get_kernel().python)})
 
             elif self.path == "/api/env/select":
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 mode = data.get("mode", "global")
                 name = data.get("name")
                 try:
-                    info = kernel.switch_env(mode, name)
+                    info = get_kernel().switch_env(mode, name)
                     self._send_json({"success": True, "current": self._env_payload(info)})
                 except Exception as e:
                     self._send_json({"success": False, "error": str(e)})
@@ -118,6 +135,9 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             return
         except Exception as e:
+            print(f"[Jupy] Error in do_POST: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
             self._send_json({"success": False, "error": str(e)})
 
     def do_GET(self):
@@ -140,14 +160,14 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
             return
 
         elif self.path == "/api/status":
-            self._send_json({"status": "ready", "exec_count": kernel.exec_count, "venv": kernel.env_info["path"]})
+            self._send_json({"status": "ready", "exec_count": get_kernel().exec_count, "venv": get_kernel().env_info["path"]})
 
         elif self.path == "/api/pip/list":
-            self._send_json({"packages": list_packages(kernel.python)})
+            self._send_json({"packages": list_packages(get_kernel().python)})
 
         elif self.path == "/api/env/list":
             self._send_json({
-                "current": self._env_payload(kernel.env_info),
+                "current": self._env_payload(get_kernel().env_info),
                 "global_envs": envmanager.list_global_envs(),
                 "jupy_version": JUPY_VERSION,
                 "platform": platform.platform(),
@@ -170,7 +190,6 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
     # ----- Export methods -----
     def _export_to_html(self, notebook_json, for_pdf=False):
         cells = notebook_json.get("cells", [])
-        # Build HTML with styles
         html = """<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Exported Notebook</title>
@@ -190,7 +209,6 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
             source = cell.get("source", "")
             outputs = cell.get("outputs", [])
             if cell_type == "markdown":
-                # Use marked to render markdown if available? We'll just output raw source.
                 html += f'<div class="cell cell-markdown">{source}</div>'
             else:
                 html += f'<div class="cell cell-code"><pre>{source}</pre>'
@@ -202,7 +220,6 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                     elif out.get("kind") == "plot":
                         html += f'<div class="cell-output plot-container">{out["text"]}</div>'
                     elif out.get("kind") == "display":
-                        # Try to get HTML from display data
                         data = out.get("data", {})
                         if "text/html" in data:
                             html += f'<div class="cell-output">{data["text/html"]}</div>'
@@ -217,8 +234,7 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
         lines = []
         for cell in cells:
             if cell.get("type") == "code":
-                source = cell.get("source", "")
-                lines.append(source)
+                lines.append(cell.get("source", ""))
         return "\n\n".join(lines)
 
     def _export_to_md(self, notebook_json):
@@ -231,7 +247,7 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 lines.append("```python\n" + cell.get("source", "") + "\n```")
         return "\n\n".join(lines)
 
-    # ----- WebSocket handlers (unchanged) -----
+    # ----- WebSocket handlers -----
     def handle_metrics_ws(self):
         ws_lock = threading.Lock()
 
@@ -263,8 +279,18 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                     frame = make_ws_frame(json.dumps(data_dict))
                     self.wfile.write(frame)
                     self.wfile.flush()
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[Jupy] ws_send error: {e}", flush=True)
+
+        # Ensure kernel is imported and alive before accepting messages
+        try:
+            kernel = get_kernel()
+            print("[Jupy] WebSocket run handler: kernel ready", flush=True)
+        except Exception as e:
+            print(f"[Jupy] WebSocket run handler: kernel failed to start: {e}", flush=True)
+            # Send an error message to the frontend if possible
+            # But we can't because we need to respond on WebSocket
+            return
 
         while True:
             msg, opcode = parse_ws_frame(self.rfile)
@@ -275,14 +301,17 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 action = req.get("action")
                 if action == "run":
                     code = req.get("code", "")
+                    print(f"[Jupy] Received run request: {code[:50]}...", flush=True)
                     threading.Thread(target=kernel.execute, args=(code, ws_send), daemon=True).start()
                 elif action == "interrupt":
                     kernel.interrupt()
                 elif action == "stdin_reply":
                     val = req.get("value", "")
                     kernel.handle_stdin_reply(val)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[Jupy] Error in WebSocket message: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
 
     def handle_terminal_ws(self):
         env = os.environ.copy()
@@ -303,7 +332,6 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
         def stream_stdout():
             while proc.poll() is None:
                 try:
-                    # Read in 4096-byte chunks for performance
                     chunk = proc.stdout.read(4096)
                     if chunk:
                         text = chunk.decode("utf-8", errors="replace")

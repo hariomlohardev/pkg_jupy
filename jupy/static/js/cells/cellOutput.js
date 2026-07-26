@@ -3,6 +3,7 @@
  * Rendering of cell outputs (text, plots, rich display data, widgets).
  */
 import { MAX_CELL_OUTPUT_LINES } from '../config/constants.js';
+import { renderRichOutput } from '../output/richOutput.js';
 
 export function clearCellOutput(cell) {
   cell.outputs = [];
@@ -39,47 +40,15 @@ export function appendCellPlot(cell, htmlString) {
 }
 
 export function appendDisplayData(cell, mimeData) {
+  console.log('[appendDisplayData] Called with mimeData:', mimeData);
   cell.dom.outputEl.hidden = false;
   const container = document.createElement('div');
   container.className = 'display-data-container';
-
-  let rendered = false;
-
-  if (mimeData['text/html']) {
-    let html = mimeData['text/html'];
-    if (window.DOMPurify) {
-      html = window.DOMPurify.sanitize(html, { SAFE_FOR_JQUERY: true });
-    }
-    container.innerHTML = html;
-    rendered = true;
-  } else if (mimeData['image/svg+xml']) {
-    const svg = mimeData['image/svg+xml'];
-    container.innerHTML = `<svg style="max-width:100%;">${svg}</svg>`;
-    rendered = true;
-  } else if (mimeData['text/latex']) {
-    const latex = mimeData['text/latex'];
-    container.innerHTML = `$$${latex}$$`;
-    rendered = true;
-    if (window.MathJax) {
-      MathJax.typesetPromise([container]).catch(() => {});
-    }
-  } else if (mimeData['video/mp4']) {
-    container.innerHTML = `<video controls style="max-width:100%;"><source src="${mimeData['video/mp4']}" type="video/mp4"></video>`;
-    rendered = true;
-  } else if (mimeData['audio/mpeg']) {
-    container.innerHTML = `<audio controls style="max-width:100%;"><source src="${mimeData['audio/mpeg']}" type="audio/mpeg"></audio>`;
-    rendered = true;
-  }
-
-  if (!rendered && mimeData['text/plain']) {
-    container.textContent = mimeData['text/plain'];
-    rendered = true;
-  }
-
+  const rendered = renderRichOutput(container, mimeData);
+  console.log('[appendDisplayData] rendered =', rendered);
   if (!rendered) {
     container.textContent = '(Display data with unknown format)';
   }
-
   cell.dom.outputEl.appendChild(container);
   cell.outputs.push({ kind: 'display', data: mimeData });
   scrollToBottom(cell);

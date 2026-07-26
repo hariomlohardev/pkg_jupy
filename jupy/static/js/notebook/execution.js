@@ -8,8 +8,8 @@ import {
   appendCellOutput, 
   appendCellPlot, 
   appendCellStdinPrompt,
-  appendDisplayData,   // add this
-  appendWidget         // add this
+  appendDisplayData,
+  appendWidget
 } from '../cells/cellOutput.js';
 export function createExecution(state, runSocket, showToast, setStatus, operations, selection) {
   const { cells, indexOf, getCell, runningCellId, executionQueue } = state;

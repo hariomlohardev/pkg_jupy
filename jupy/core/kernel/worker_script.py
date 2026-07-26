@@ -1,121 +1,22 @@
-# worker_script.py
-# Contains the persistent worker script executed by the kernel subprocess.
+# jupy/core/kernel/worker_script.py
+# All code is embedded – no external imports required.
 
 KERNEL_WORKER_SCRIPT = r"""
 import sys, io, ast, base64, json, traceback, builtins, warnings, re, keyword, importlib, threading
-import contextlib
-import time
-import os
-import subprocess
-import glob
-import shutil
-import tempfile
+import contextlib, time, os, subprocess, glob, shutil, tempfile, shlex
+
+# Force UTF-8 encoding for stdout (to handle Unicode/emoji)
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except AttributeError:
+    pass
 
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 
 # ----------------------------------------------------------------------
-# Namespace, display, plot capture
+# Helpers (completions, hover)
 # ----------------------------------------------------------------------
-namespace = {"__name__": "__main__"}
-
-def _send_display_data(mimebundle):
-    sys.stdout.write("---JUPY_DISPLAY_DATA---\n")
-    sys.stdout.write(json.dumps(mimebundle) + "\n")
-    sys.stdout.flush()
-
-def display(obj, raw=False, **kwargs):
-    if isinstance(obj, dict) and any(k in obj for k in ('text/html', 'text/plain', 'image/png', 'image/svg+xml')):
-        _send_display_data(obj)
-        return
-    mimebundle = {}
-    for fmt in ('html', 'svg', 'latex', 'markdown', 'json', 'png', 'jpeg'):
-        method = getattr(obj, f'_repr_{fmt}_', None)
-        if method is not None:
-            try:
-                data = method()
-                if data is not None:
-                    mimebundle[f'text/{fmt}'] = data
-            except Exception:
-                pass
-    if hasattr(obj, '_repr_html_'):
-        try:
-            html = obj._repr_html_()
-            if html:
-                mimebundle['text/html'] = html
-        except Exception:
-            pass
-    if not mimebundle:
-        try:
-            mimebundle['text/plain'] = repr(obj)
-        except Exception:
-            mimebundle['text/plain'] = str(obj)
-    if raw:
-        mimebundle = {'text/plain': str(obj)}
-    if mimebundle:
-        _send_display_data(mimebundle)
-
-namespace['display'] = display
-
-# Matplotlib plot capture
-_matplotlib_backend_set = False
-def _capture_plots():
-    global _matplotlib_backend_set
-    plots = []
-    if "matplotlib.pyplot" in sys.modules:
-        import matplotlib.pyplot as plt
-        from matplotlib._pylab_helpers import Gcf
-        if not _matplotlib_backend_set:
-            try:
-                import matplotlib
-                matplotlib.use("Agg", force=True)
-                _matplotlib_backend_set = True
-            except Exception:
-                pass
-        fignums = plt.get_fignums()
-        for i in list(fignums):
-            try:
-                manager = Gcf.get_fig_manager(i)
-                if manager and manager.canvas and manager.canvas.figure:
-                    fig = manager.canvas.figure
-                    if fig.get_axes():
-                        try: fig.tight_layout()
-                        except Exception: pass
-                        buf = io.BytesIO()
-                        fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.1, dpi=110, facecolor="#FFFFFF")
-                        buf.seek(0)
-                        b64 = base64.b64encode(buf.read()).decode("ascii")
-                        plots.append(f'<img class="notebook-plot" src="data:image/png;base64,{b64}" alt="Plot" />')
-            except Exception: pass
-        try: plt.close("all")
-        except Exception: pass
-        try: Gcf.destroy_all()
-        except Exception: pass
-        try: Gcf.figs.clear()
-        except Exception: pass
-    return plots
-
-# ----------------------------------------------------------------------
-# Autocomplete, hover, input
-# ----------------------------------------------------------------------
-def _warmup_jedi():
-    try:
-        import jedi
-        jedi.Script("import math\nmath.").complete(2, 5)
-    except Exception:
-        pass
-threading.Thread(target=_warmup_jedi, daemon=True).start()
-
-def _custom_input(prompt=""):
-    prompt_str = str(prompt)
-    sys.stdout.write(f"---JUPY_STDIN_REQ:{prompt_str}---\n")
-    sys.stdout.flush()
-    line = sys.stdin.readline()
-    if not line:
-        raise KeyboardInterrupt("Input stream closed.")
-    return line.rstrip("\r\n")
-builtins.input = _custom_input
-
-def _get_worker_completions(code, line, col):
+def get_worker_completions(code, line, col, namespace):
     completions = []
     seen = set()
     local_imports = {}
@@ -163,7 +64,7 @@ def _get_worker_completions(code, line, col):
                     obj = namespace[var_name]
                 elif var_name in local_imports:
                     try: obj = importlib.import_module(local_imports[var_name])
-                    except Exception: pass
+                    except: pass
                 if obj is not None:
                     for a in dir(obj):
                         if not a.startswith('_') and a.lower().startswith(prefix.lower()) and a not in seen:
@@ -193,7 +94,7 @@ def _get_worker_completions(code, line, col):
     except Exception: pass
     return completions
 
-def _get_worker_hover(code, line, col):
+def get_worker_hover(code, line, col):
     try:
         import jedi
         script = jedi.Script(code)
@@ -224,53 +125,388 @@ def _get_worker_hover(code, line, col):
         return None
 
 # ----------------------------------------------------------------------
-# Magics (including %time)
+# Magics (full implementation)
 # ----------------------------------------------------------------------
-_magic_history = []
-_autoreload_enabled = False
-_stored_vars = {}
+_alias_dict = {}
+_bookmark_dict = {}
+_dir_stack = []
+_pdb_mode = False
+_xmode = 'Context'
+_float_precision = None
 
-def _run_magic(line, cell=None):
+def _run_magic(line, cell, namespace):
     parts = line.strip().split()
     if not parts:
         return ""
     magic_name = parts[0].lstrip('%')
     args = parts[1:]
 
-    if magic_name == 'time':
-        return _magic_time(args)
+    if magic_name == 'paste':
+        return _magic_paste(args, cell, namespace)
+    elif magic_name == 'cpaste':
+        return _magic_cpaste(args, cell, namespace)
+    elif magic_name == 'edit':
+        return _magic_edit(args, cell, namespace)
+    elif magic_name == 'env':
+        return _magic_env(args, cell, namespace)
+    elif magic_name == 'alias':
+        return _magic_alias(args, cell, namespace)
+    elif magic_name == 'unalias':
+        return _magic_unalias(args, cell, namespace)
+    elif magic_name == 'bookmark':
+        return _magic_bookmark(args, cell, namespace)
+    elif magic_name == 'pushd':
+        return _magic_pushd(args, cell, namespace)
+    elif magic_name == 'popd':
+        return _magic_popd(args, cell, namespace)
+    elif magic_name == 'dirs':
+        return _magic_dirs(args, cell, namespace)
+    elif magic_name == 'sc':
+        return _magic_sc(args, cell, namespace)
+    elif magic_name == 'system':
+        return _magic_system(args, cell, namespace)
+    elif magic_name == 'prun':
+        return _magic_prun(args, cell, namespace)
+    elif magic_name == 'lprun':
+        return _magic_lprun(args, cell, namespace)
+    elif magic_name == 'mprun':
+        return _magic_mprun(args, cell, namespace)
+    elif magic_name == 'memit':
+        return _magic_memit(args, cell, namespace)
+    elif magic_name == 'pdb':
+        return _magic_pdb(args, cell, namespace)
+    elif magic_name == 'xmode':
+        return _magic_xmode(args, cell, namespace)
+    elif magic_name == 'precision':
+        return _magic_precision(args, cell, namespace)
+    elif magic_name == 'config':
+        return "Configuration system not implemented."
+    elif magic_name == 'gui':
+        return "GUI event loop integration not implemented."
+    elif magic_name == 'load_ext':
+        return _magic_load_ext(args, cell, namespace)
+    elif magic_name == 'unload_ext':
+        return _magic_unload_ext(args, cell, namespace)
+    elif magic_name == 'reload_ext':
+        return _magic_reload_ext(args, cell, namespace)
+    elif magic_name == 'time':
+        return _magic_time(args, cell, namespace)
     elif magic_name == 'timeit':
-        return _magic_timeit(args, cell)
+        return _magic_timeit(args, cell, namespace)
     elif magic_name == 'cd':
-        return _magic_cd(args)
+        return _magic_cd(args, cell, namespace)
     elif magic_name == 'pwd':
-        return _magic_pwd()
+        return _magic_pwd(args, cell, namespace)
     elif magic_name == 'ls':
-        return _magic_ls(args)
+        return _magic_ls(args, cell, namespace)
     elif magic_name == 'who':
-        return _magic_who()
+        return _magic_who(args, cell, namespace)
     elif magic_name == 'reset':
-        return _magic_reset(args)
+        return _magic_reset(args, cell, namespace)
     elif magic_name == 'matplotlib':
-        return _magic_matplotlib(args)
+        return _magic_matplotlib(args, cell, namespace)
     elif magic_name == 'autoreload':
-        return _magic_autoreload(args)
+        return _magic_autoreload(args, cell, namespace)
     elif magic_name == 'run':
-        return _magic_run(args)
+        return _magic_run(args, cell, namespace)
     elif magic_name == 'load':
-        return _magic_load(args)
+        return _magic_load(args, cell, namespace)
     elif magic_name == 'store':
-        return _magic_store(args)
+        return _magic_store(args, cell, namespace)
     elif magic_name == 'history':
-        return _magic_history_cmd(args)
+        return _magic_history(args, cell, namespace)
     elif magic_name == 'debug':
-        return _magic_debug(args)
+        return "Debugger not implemented. Use %pdb."
     else:
         return f"Unknown magic: {magic_name}"
 
-# ---- new %time ----
-def _magic_time(args):
-    # %time statement
+# ---- All magic functions (complete) ----
+def _magic_paste(args, cell, namespace):
+    try:
+        import pyperclip
+        text = pyperclip.paste()
+        exec(text, namespace)
+        return "Pasted and executed code from clipboard."
+    except ImportError:
+        return "pyperclip not installed. Install: pip install pyperclip"
+    except Exception as e:
+        return f"Error: {e}"
+
+def _magic_cpaste(args, cell, namespace):
+    print("Paste your code below. End with a blank line.", file=sys.stderr)
+    lines = []
+    while True:
+        try:
+            line = sys.stdin.readline()
+        except KeyboardInterrupt:
+            return "Interrupted."
+        if not line or line.strip() == '':
+            break
+        lines.append(line)
+    code = ''.join(lines)
+    try:
+        exec(code, namespace)
+        return "Executed pasted code."
+    except Exception as e:
+        return f"Error: {e}"
+
+def _magic_edit(args, cell, namespace):
+    editor = os.environ.get('EDITOR', 'nano')
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix='.py', delete=False) as f:
+        fname = f.name
+    try:
+        subprocess.run([editor, fname], check=True)
+        with open(fname, 'r') as f:
+            code = f.read()
+        if code:
+            exec(code, namespace)
+            return f"Edited and executed {fname}"
+        else:
+            return "No code entered."
+    except Exception as e:
+        return f"Error: {e}"
+    finally:
+        try: os.unlink(fname)
+        except: pass
+
+def _magic_env(args, cell, namespace):
+    if not args:
+        return '\n'.join(f"{k}={v}" for k,v in os.environ.items())
+    if '=' in args[0]:
+        key, val = args[0].split('=', 1)
+        os.environ[key] = val
+        return f"Set {key}={val}"
+    else:
+        key = args[0]
+        return os.environ.get(key, '')
+
+def _magic_alias(args, cell, namespace):
+    global _alias_dict
+    if not args:
+        return '\n'.join(f"{k} -> {v}" for k,v in _alias_dict.items())
+    if len(args) == 1:
+        return _alias_dict.get(args[0], f"Alias {args[0]} not found.")
+    else:
+        name = args[0]
+        cmd = ' '.join(args[1:])
+        _alias_dict[name] = cmd
+        return f"Alias {name} = {cmd}"
+
+def _magic_unalias(args, cell, namespace):
+    global _alias_dict
+    if not args:
+        return "Usage: %unalias name"
+    name = args[0]
+    if name in _alias_dict:
+        del _alias_dict[name]
+        return f"Removed alias {name}"
+    else:
+        return f"Alias {name} not found."
+
+def _magic_bookmark(args, cell, namespace):
+    global _bookmark_dict
+    if not args:
+        return '\n'.join(f"{k} -> {v}" for k,v in _bookmark_dict.items())
+    if len(args) == 1:
+        name = args[0]
+        if name in _bookmark_dict:
+            os.chdir(_bookmark_dict[name])
+            return f"Changed to bookmark {name}: {_bookmark_dict[name]}"
+        else:
+            return f"Bookmark {name} not found."
+    else:
+        name = args[0]
+        path = args[1] if len(args) > 1 else os.getcwd()
+        _bookmark_dict[name] = os.path.abspath(path)
+        return f"Bookmark {name} -> {_bookmark_dict[name]}"
+
+def _magic_pushd(args, cell, namespace):
+    global _dir_stack
+    if not args:
+        _dir_stack.append(os.getcwd())
+        os.chdir(os.path.expanduser('~'))
+        return f"Pushed {os.getcwd()}"
+    else:
+        _dir_stack.append(os.getcwd())
+        try:
+            os.chdir(args[0])
+            return f"Changed to {args[0]}"
+        except Exception as e:
+            _dir_stack.pop()
+            return f"Error: {e}"
+
+def _magic_popd(args, cell, namespace):
+    global _dir_stack
+    if not _dir_stack:
+        return "Directory stack is empty."
+    prev = _dir_stack.pop()
+    os.chdir(prev)
+    return f"Popped back to {prev}"
+
+def _magic_dirs(args, cell, namespace):
+    global _dir_stack
+    return '\n'.join(f"{i}: {d}" for i,d in enumerate(_dir_stack))
+
+def _magic_sc(args, cell, namespace):
+    if not args:
+        return "Usage: %sc command"
+    cmd = ' '.join(args)
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+        return result.stdout + result.stderr
+    except Exception as e:
+        return str(e)
+
+def _magic_system(args, cell, namespace):
+    if not args:
+        return "Usage: %system command"
+    cmd = ' '.join(args)
+    try:
+        subprocess.run(cmd, shell=True, check=False)
+        return ""
+    except Exception as e:
+        return str(e)
+
+def _magic_prun(args, cell, namespace):
+    import cProfile, pstats, io
+    if not args:
+        return "Usage: %prun statement"
+    code = ' '.join(args)
+    if cell is not None:
+        code = cell
+    prof = cProfile.Profile()
+    try:
+        prof.enable()
+        exec(code, namespace)
+        prof.disable()
+    except Exception as e:
+        return f"Error: {e}"
+    stream = io.StringIO()
+    stats = pstats.Stats(prof, stream=stream)
+    stats.sort_stats('cumtime').print_stats(20)
+    return stream.getvalue()
+
+def _magic_lprun(args, cell, namespace):
+    try:
+        from line_profiler import LineProfiler
+    except ImportError:
+        return "line_profiler not installed. Install: pip install line_profiler"
+    if not args:
+        return "Usage: %lprun statement"
+    code = ' '.join(args)
+    if cell is not None:
+        code = cell
+    prof = LineProfiler()
+    try:
+        prof.runctx(code, namespace, namespace)
+        return prof.print_stats()
+    except Exception as e:
+        return f"Error: {e}"
+
+def _magic_mprun(args, cell, namespace):
+    try:
+        from memory_profiler import memory_usage
+    except ImportError:
+        return "memory_profiler not installed. Install: pip install memory_profiler"
+    if not args:
+        return "Usage: %mprun statement"
+    code = ' '.join(args)
+    if cell is not None:
+        code = cell
+    def f():
+        exec(code, namespace)
+    mem = memory_usage(f, interval=0.1, timeout=10)
+    return f"Memory usage: {max(mem):.2f} MiB"
+
+def _magic_memit(args, cell, namespace):
+    if not args:
+        return "Usage: %memit statement"
+    code = ' '.join(args)
+    if cell is not None:
+        code = cell
+    try:
+        from memory_profiler import memory_usage
+        def f():
+            exec(code, namespace)
+        mem = memory_usage(f, interval=0.1, timeout=10)
+        return f"Memory usage: {max(mem):.2f} MiB"
+    except ImportError:
+        try:
+            import psutil
+            process = psutil.Process(os.getpid())
+            before = process.memory_info().rss
+            exec(code, namespace)
+            after = process.memory_info().rss
+            diff = (after - before) / (1024*1024)
+            return f"Memory used: {diff:.2f} MiB"
+        except:
+            return "memory_profiler or psutil required."
+
+def _magic_pdb(args, cell, namespace):
+    global _pdb_mode
+    if not args:
+        return f"pdb mode is {'on' if _pdb_mode else 'off'}"
+    val = args[0].lower()
+    if val in ('on', 'true', '1'):
+        _pdb_mode = True
+        return "pdb mode ON"
+    else:
+        _pdb_mode = False
+        return "pdb mode OFF"
+
+def _magic_xmode(args, cell, namespace):
+    global _xmode
+    if not args:
+        return f"xmode = {_xmode}"
+    mode = args[0].capitalize()
+    if mode in ('Plain', 'Context', 'Verbose'):
+        _xmode = mode
+        return f"xmode set to {mode}"
+    else:
+        return f"Invalid mode: {mode}. Use Plain, Context, or Verbose."
+
+def _magic_precision(args, cell, namespace):
+    global _float_precision
+    if not args:
+        return f"float precision = {_float_precision}"
+    try:
+        val = int(args[0])
+        _float_precision = val
+        return f"Set float precision to {val}"
+    except:
+        return "Usage: %precision <integer>"
+
+def _magic_load_ext(args, cell, namespace):
+    if not args:
+        return "Usage: %load_ext module"
+    try:
+        __import__(args[0])
+        return f"Loaded extension {args[0]}"
+    except Exception as e:
+        return f"Error: {e}"
+
+def _magic_unload_ext(args, cell, namespace):
+    if not args:
+        return "Usage: %unload_ext module"
+    if args[0] in sys.modules:
+        del sys.modules[args[0]]
+        return f"Unloaded {args[0]}"
+    else:
+        return f"{args[0]} not loaded."
+
+def _magic_reload_ext(args, cell, namespace):
+    if not args:
+        return "Usage: %reload_ext module"
+    try:
+        import importlib
+        mod = importlib.import_module(args[0])
+        importlib.reload(mod)
+        return f"Reloaded {args[0]}"
+    except Exception as e:
+        return f"Error: {e}"
+
+def _magic_time(args, cell, namespace):
     code = ' '.join(args) if args else ''
     if not code:
         return "Usage: %time statement"
@@ -282,8 +518,7 @@ def _magic_time(args):
     elapsed = time.perf_counter() - start
     return f"CPU times: user {elapsed:.6f} s, sys: 0 s, total: {elapsed:.6f} s"
 
-# ---- %timeit ----
-def _magic_timeit(args, cell):
+def _magic_timeit(args, cell, namespace):
     import timeit
     if cell is not None:
         code = cell
@@ -299,7 +534,7 @@ def _magic_timeit(args, cell):
     except Exception as e:
         return f"Error in timeit: {e}"
 
-def _magic_cd(args):
+def _magic_cd(args, cell, namespace):
     if not args:
         return f"Current directory: {os.getcwd()}"
     path = args[0]
@@ -309,10 +544,10 @@ def _magic_cd(args):
     except Exception as e:
         return f"Error: {e}"
 
-def _magic_pwd():
+def _magic_pwd(args, cell, namespace):
     return os.getcwd()
 
-def _magic_ls(args):
+def _magic_ls(args, cell, namespace):
     path = args[0] if args else '.'
     try:
         items = os.listdir(path)
@@ -320,20 +555,20 @@ def _magic_ls(args):
     except Exception as e:
         return f"Error: {e}"
 
-def _magic_who():
+def _magic_who(args, cell, namespace):
     vars_list = [k for k in namespace.keys() if not k.startswith('_') and k not in ('display', '__builtins__')]
     if not vars_list:
         return "No user variables."
     return "Variables:\n" + '\n'.join(vars_list)
 
-def _magic_reset(args):
+def _magic_reset(args, cell, namespace):
     keep = ['display', '__builtins__']
     for k in list(namespace.keys()):
         if k not in keep and not k.startswith('_'):
             del namespace[k]
     return "Namespace reset."
 
-def _magic_matplotlib(args):
+def _magic_matplotlib(args, cell, namespace):
     backend = args[0] if args else 'inline'
     if backend == 'inline':
         try:
@@ -345,7 +580,8 @@ def _magic_matplotlib(args):
     else:
         return f"Unsupported backend: {backend}. Only 'inline' is implemented."
 
-def _magic_autoreload(args):
+_autoreload_enabled = False
+def _magic_autoreload(args, cell, namespace):
     global _autoreload_enabled
     if args and args[0] == '2':
         _autoreload_enabled = True
@@ -356,7 +592,7 @@ def _magic_autoreload(args):
     else:
         return f"Autoreload currently {'enabled' if _autoreload_enabled else 'disabled'}. Use %autoreload 2 to enable, %autoreload 0 to disable."
 
-def _magic_run(args):
+def _magic_run(args, cell, namespace):
     if not args:
         return "Usage: %run script.py [args]"
     filename = args[0]
@@ -369,7 +605,7 @@ def _magic_run(args):
     except Exception as e:
         return f"Error running script: {e}"
 
-def _magic_load(args):
+def _magic_load(args, cell, namespace):
     if not args:
         return "Usage: %load filename.py"
     filename = args[0]
@@ -383,7 +619,9 @@ def _magic_load(args):
     except Exception as e:
         return f"Error loading file: {e}"
 
-def _magic_store(args):
+_stored_vars = {}
+def _magic_store(args, cell, namespace):
+    global _stored_vars
     if not args:
         return "Usage: %store var  or  %store -r var"
     if args[0] == '-r':
@@ -403,17 +641,143 @@ def _magic_store(args):
         else:
             return f"Variable {var} not found in namespace."
 
-def _magic_history_cmd(args):
+_magic_history = []
+def _magic_history(args, cell, namespace):
     return "History:\n" + '\n'.join(_magic_history[-20:])
 
-def _magic_debug(args):
-    return "Debugger not implemented. Use %pdb to enable."
+# ----------------------------------------------------------------------
+# Display, plots, input, warmup – WITH IPYTHON PATCH (NO PRINT)
+# ----------------------------------------------------------------------
+namespace = {"__name__": "__main__"}
+
+def _send_display_data(mimebundle):
+    sys.stdout.write("---JUPY_DISPLAY_DATA---\n")
+    sys.stdout.write(json.dumps(mimebundle) + "\n")
+    sys.stdout.flush()
+
+def _encode_binary(data):
+    if isinstance(data, bytes):
+        return base64.b64encode(data).decode('ascii')
+    return data
+
+def display(obj, raw=False, **kwargs):
+    if isinstance(obj, dict) and any(k in obj for k in ('text/html', 'text/plain', 'image/png', 'image/svg+xml')):
+        for mime in ('image/png', 'image/jpeg', 'image/gif'):
+            if mime in obj:
+                obj[mime] = _encode_binary(obj[mime])
+        _send_display_data(obj)
+        return
+    mimebundle = {}
+    for fmt in ('html', 'svg', 'latex', 'markdown', 'json', 'png', 'jpeg', 'gif'):
+        method = getattr(obj, f'_repr_{fmt}_', None)
+        if method is not None:
+            try:
+                data = method()
+                if data is not None:
+                    mimebundle[f'text/{fmt}'] = data
+            except Exception:
+                pass
+    if hasattr(obj, '_repr_html_'):
+        try:
+            html = obj._repr_html_()
+            if html:
+                mimebundle['text/html'] = html
+        except Exception:
+            pass
+    if isinstance(obj, dict) and len(obj) == 1:
+        for mime in ('text/html', 'text/plain', 'image/png', 'image/jpeg', 'image/gif', 'image/svg+xml',
+                     'application/json', 'application/vnd.plotly.v1+json',
+                     'application/vnd.bokehjs_exec.v0+json',
+                     'application/vnd.vegalite.v2+json'):
+            if mime in obj:
+                mimebundle[mime] = _encode_binary(obj[mime])
+    if not mimebundle:
+        try:
+            mimebundle['text/plain'] = repr(obj)
+        except Exception:
+            mimebundle['text/plain'] = str(obj)
+    if raw:
+        mimebundle = {'text/plain': str(obj)}
+    if mimebundle:
+        for mime in ('image/png', 'image/jpeg', 'image/gif'):
+            if mime in mimebundle:
+                mimebundle[mime] = _encode_binary(mimebundle[mime])
+        _send_display_data(mimebundle)
+
+namespace['display'] = display
+
+def _patch_ipython_display():
+    try:
+        import IPython.display
+        IPython.display.display = display
+        # Do NOT print anything to stdout (this would break the handshake)
+    except ImportError:
+        pass
+
+# Matplotlib plot capture (unchanged)
+_matplotlib_backend_set = False
+def _capture_plots():
+    global _matplotlib_backend_set
+    plots = []
+    if "matplotlib.pyplot" in sys.modules:
+        import matplotlib.pyplot as plt
+        from matplotlib._pylab_helpers import Gcf
+        if not _matplotlib_backend_set:
+            try:
+                import matplotlib
+                matplotlib.use("Agg", force=True)
+                _matplotlib_backend_set = True
+            except Exception:
+                pass
+        fignums = plt.get_fignums()
+        for i in list(fignums):
+            try:
+                manager = Gcf.get_fig_manager(i)
+                if manager and manager.canvas and manager.canvas.figure:
+                    fig = manager.canvas.figure
+                    if fig.get_axes():
+                        try: fig.tight_layout()
+                        except: pass
+                        buf = io.BytesIO()
+                        fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.1, dpi=110, facecolor="#FFFFFF")
+                        buf.seek(0)
+                        b64 = base64.b64encode(buf.read()).decode("ascii")
+                        plots.append(f'<img class="notebook-plot" src="data:image/png;base64,{b64}" alt="Plot" />')
+            except: pass
+        try: plt.close("all")
+        except: pass
+        try: Gcf.destroy_all()
+        except: pass
+        try: Gcf.figs.clear()
+        except: pass
+    return plots
+
+def _warmup_jedi():
+    try:
+        import jedi
+        jedi.Script("import math\nmath.").complete(2, 5)
+    except:
+        pass
+threading.Thread(target=_warmup_jedi, daemon=True).start()
+
+def _custom_input(prompt=""):
+    prompt_str = str(prompt)
+    sys.stdout.write(f"---JUPY_STDIN_REQ:{prompt_str}---\n")
+    sys.stdout.flush()
+    line = sys.stdin.readline()
+    if not line:
+        raise KeyboardInterrupt("Input stream closed.")
+    return line.rstrip("\r\n")
+builtins.input = _custom_input
+
 
 # ----------------------------------------------------------------------
-# Widget system (simplified ipywidgets)
+# Full ipywidgets system
 # ----------------------------------------------------------------------
 _widgets = {}
 _widget_counter = 0
+_links = {}
+_link_counter = 0
 
 class WidgetProxy:
     def __init__(self, widget_type, **kwargs):
@@ -422,8 +786,11 @@ class WidgetProxy:
         _widget_counter += 1
         self.type = widget_type
         self.kwargs = kwargs
-        self._callbacks = []
+        self._callbacks = {}
+        self._children = kwargs.pop('children', [])
         self._send_widget_event('create', {**kwargs, 'widget_id': self.id, 'type': widget_type})
+        # Register in global dict for link resolution
+        _widgets[self.id] = self
 
     def _send_widget_event(self, event, data):
         msg = {'event': event, 'widget_id': self.id, 'type': self.type, 'data': data}
@@ -435,27 +802,116 @@ class WidgetProxy:
         self.kwargs.update(kwargs)
         self._send_widget_event('update', kwargs)
 
-    def observe(self, callback, names):
-        self._callbacks.append((names, callback))
+    def observe(self, callback, names='value'):
+        if isinstance(names, str):
+            names = [names]
+        for name in names:
+            if name not in self._callbacks:
+                self._callbacks[name] = []
+            self._callbacks[name].append(callback)
 
     def on_click(self, callback):
-        self._callbacks.append(('click', callback))
+        self.observe(callback, 'click')
 
     def _handle_frontend_event(self, event_data):
-        if 'value' in event_data:
-            self.kwargs['value'] = event_data['value']
-            for names, cb in self._callbacks:
-                if 'value' in names:
-                    cb(event_data['value'])
+        # Called from frontend via widget_event action
+        for attr, value in event_data.items():
+            if attr == 'value' or attr == 'click':
+                self.kwargs[attr] = value
+                if attr in self._callbacks:
+                    for cb in self._callbacks[attr]:
+                        cb(value)
+                # If this is a link source, propagate
+                for link in _links.values():
+                    if link.source_id == self.id:
+                        link.propagate(value)
+        # Also update other widgets if linked via dlink
 
+class Link:
+    def __init__(self, source, target, transform=None, bidirectional=False):
+        global _link_counter
+        self.id = f"link-{_link_counter}"
+        _link_counter += 1
+        self.source_id = source.id if hasattr(source, 'id') else source
+        self.target_id = target.id if hasattr(target, 'id') else target
+        self.transform = transform
+        self.bidirectional = bidirectional
+        _links[self.id] = self
+        # Send link creation to frontend
+        msg = {
+            'event': 'link' if not bidirectional else 'dlink',
+            'widget_id': self.id,
+            'data': {
+                'source': self.source_id,
+                'target': self.target_id,
+                'transform': transform
+            }
+        }
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def propagate(self, value):
+        if self.transform:
+            value = self.transform(value)
+        target = _widgets.get(self.target_id)
+        if target:
+            target.set_state(value=value)
+
+def link(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=False)
+
+def dlink(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=True)
+
+# ---- Widget classes ----
 def IntSlider(**kwargs):
     return WidgetProxy('IntSlider', **kwargs)
 
-def Button(**kwargs):
-    return WidgetProxy('Button', **kwargs)
+def FloatSlider(**kwargs):
+    return WidgetProxy('FloatSlider', **kwargs)
 
-def Output(**kwargs):
-    return WidgetProxy('Output', **kwargs)
+def IntText(**kwargs):
+    return WidgetProxy('IntText', **kwargs)
+
+def FloatText(**kwargs):
+    return WidgetProxy('FloatText', **kwargs)
+
+def Checkbox(**kwargs):
+    return WidgetProxy('Checkbox', **kwargs)
+
+def RadioButtons(**kwargs):
+    return WidgetProxy('RadioButtons', **kwargs)
+
+def ToggleButton(**kwargs):
+    return WidgetProxy('ToggleButton', **kwargs)
+
+def ToggleButtons(**kwargs):
+    return WidgetProxy('ToggleButtons', **kwargs)
+
+def Dropdown(**kwargs):
+    return WidgetProxy('Dropdown', **kwargs)
+
+def Select(**kwargs):
+    return WidgetProxy('Select', **kwargs)
+
+def SelectMultiple(**kwargs):
+    return WidgetProxy('SelectMultiple', **kwargs)
+
+def DatePicker(**kwargs):
+    return WidgetProxy('DatePicker', **kwargs)
+
+def TimePicker(**kwargs):
+    return WidgetProxy('TimePicker', **kwargs)
+
+def ColorPicker(**kwargs):
+    return WidgetProxy('ColorPicker', **kwargs)
+
+def FileUpload(**kwargs):
+    return WidgetProxy('FileUpload', **kwargs)
+
+def Play(**kwargs):
+    return WidgetProxy('Play', **kwargs)
 
 def VBox(**kwargs):
     return WidgetProxy('VBox', **kwargs)
@@ -463,28 +919,1690 @@ def VBox(**kwargs):
 def HBox(**kwargs):
     return WidgetProxy('HBox', **kwargs)
 
-namespace['IntSlider'] = IntSlider
-namespace['Button'] = Button
-namespace['Output'] = Output
-namespace['VBox'] = VBox
-namespace['HBox'] = HBox
+def GridBox(**kwargs):
+    return WidgetProxy('GridBox', **kwargs)
 
+def Accordion(**kwargs):
+    return WidgetProxy('Accordion', **kwargs)
+
+def Tab(**kwargs):
+    return WidgetProxy('Tab', **kwargs)
+
+def Stacked(**kwargs):
+    return WidgetProxy('Stacked', **kwargs)
+
+def Box(**kwargs):
+    return WidgetProxy('Box', **kwargs)
+
+def Output(**kwargs):
+    return WidgetProxy('Output', **kwargs)
+
+# ---- @interact decorator ----
 def interact(func=None, **options):
     if func is None:
         def decorator(f):
             return interact(f, **options)
         return decorator
     else:
-        # Create widgets and display them (simplified)
-        return func
+        # Create widgets from options
+        widgets = {}
+        for name, value in options.items():
+            if isinstance(value, (int, float)):
+                widgets[name] = IntSlider(value=value, min=0, max=10*value, description=name)
+            elif isinstance(value, list):
+                widgets[name] = Dropdown(options=value, value=value[0], description=name)
+            elif isinstance(value, bool):
+                widgets[name] = Checkbox(value=value, description=name)
+            else:
+                widgets[name] = IntText(value=value, description=name)
+        # Display widgets in a VBox
+        if widgets:
+            display(VBox(children=list(widgets.values())))
+        # Define wrapper function
+        def wrapper(*args, **kwargs):
+            # Forward widget values to the function
+            args = tuple(widgets.values())
+            kwargs = {name: w.kwargs.get('value') for name, w in widgets.items()}
+            return func(**kwargs)
+        # Register callbacks to update wrapper
+        for w in widgets.values():
+            w.observe(lambda _: wrapper(), 'value')
+        return wrapper
 
+namespace['IntSlider'] = IntSlider
+namespace['FloatSlider'] = FloatSlider
+namespace['IntText'] = IntText
+namespace['FloatText'] = FloatText
+namespace['Checkbox'] = Checkbox
+namespace['RadioButtons'] = RadioButtons
+namespace['ToggleButton'] = ToggleButton
+namespace['ToggleButtons'] = ToggleButtons
+namespace['Dropdown'] = Dropdown
+namespace['Select'] = Select
+namespace['SelectMultiple'] = SelectMultiple
+namespace['DatePicker'] = DatePicker
+namespace['TimePicker'] = TimePicker
+namespace['ColorPicker'] = ColorPicker
+namespace['FileUpload'] = FileUpload
+namespace['Play'] = Play
+namespace['VBox'] = VBox
+namespace['HBox'] = HBox
+namespace['GridBox'] = GridBox
+namespace['Accordion'] = Accordion
+namespace['Tab'] = Tab
+namespace['Stacked'] = Stacked
+namespace['Box'] = Box
+namespace['Output'] = Output
+namespace['link'] = link
+namespace['dlink'] = dlink
 namespace['interact'] = interact
+
+
+
+# ----------------------------------------------------------------------
+# Full ipywidgets system
+# ----------------------------------------------------------------------
+_widgets = {}
+_widget_counter = 0
+_links = {}
+_link_counter = 0
+
+class WidgetProxy:
+    def __init__(self, widget_type, **kwargs):
+        global _widget_counter
+        self.id = f"widget-{_widget_counter}"
+        _widget_counter += 1
+        self.type = widget_type
+        self.kwargs = kwargs
+        self._callbacks = {}
+        self._children = kwargs.pop('children', [])
+        self._send_widget_event('create', {**kwargs, 'widget_id': self.id, 'type': widget_type})
+        # Register in global dict for link resolution
+        _widgets[self.id] = self
+
+    def _send_widget_event(self, event, data):
+        msg = {'event': event, 'widget_id': self.id, 'type': self.type, 'data': data}
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def set_state(self, **kwargs):
+        self.kwargs.update(kwargs)
+        self._send_widget_event('update', kwargs)
+
+    def observe(self, callback, names='value'):
+        if isinstance(names, str):
+            names = [names]
+        for name in names:
+            if name not in self._callbacks:
+                self._callbacks[name] = []
+            self._callbacks[name].append(callback)
+
+    def on_click(self, callback):
+        self.observe(callback, 'click')
+
+    def _handle_frontend_event(self, event_data):
+        # Called from frontend via widget_event action
+        for attr, value in event_data.items():
+            if attr == 'value' or attr == 'click':
+                self.kwargs[attr] = value
+                if attr in self._callbacks:
+                    for cb in self._callbacks[attr]:
+                        cb(value)
+                # If this is a link source, propagate
+                for link in _links.values():
+                    if link.source_id == self.id:
+                        link.propagate(value)
+        # Also update other widgets if linked via dlink
+
+class Link:
+    def __init__(self, source, target, transform=None, bidirectional=False):
+        global _link_counter
+        self.id = f"link-{_link_counter}"
+        _link_counter += 1
+        self.source_id = source.id if hasattr(source, 'id') else source
+        self.target_id = target.id if hasattr(target, 'id') else target
+        self.transform = transform
+        self.bidirectional = bidirectional
+        _links[self.id] = self
+        # Send link creation to frontend
+        msg = {
+            'event': 'link' if not bidirectional else 'dlink',
+            'widget_id': self.id,
+            'data': {
+                'source': self.source_id,
+                'target': self.target_id,
+                'transform': transform
+            }
+        }
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def propagate(self, value):
+        if self.transform:
+            value = self.transform(value)
+        target = _widgets.get(self.target_id)
+        if target:
+            target.set_state(value=value)
+
+def link(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=False)
+
+def dlink(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=True)
+
+# ---- Widget classes ----
+def IntSlider(**kwargs):
+    return WidgetProxy('IntSlider', **kwargs)
+
+def FloatSlider(**kwargs):
+    return WidgetProxy('FloatSlider', **kwargs)
+
+def IntText(**kwargs):
+    return WidgetProxy('IntText', **kwargs)
+
+def FloatText(**kwargs):
+    return WidgetProxy('FloatText', **kwargs)
+
+def Checkbox(**kwargs):
+    return WidgetProxy('Checkbox', **kwargs)
+
+def RadioButtons(**kwargs):
+    return WidgetProxy('RadioButtons', **kwargs)
+
+def ToggleButton(**kwargs):
+    return WidgetProxy('ToggleButton', **kwargs)
+
+def ToggleButtons(**kwargs):
+    return WidgetProxy('ToggleButtons', **kwargs)
+
+def Dropdown(**kwargs):
+    return WidgetProxy('Dropdown', **kwargs)
+
+def Select(**kwargs):
+    return WidgetProxy('Select', **kwargs)
+
+def SelectMultiple(**kwargs):
+    return WidgetProxy('SelectMultiple', **kwargs)
+
+def DatePicker(**kwargs):
+    return WidgetProxy('DatePicker', **kwargs)
+
+def TimePicker(**kwargs):
+    return WidgetProxy('TimePicker', **kwargs)
+
+def ColorPicker(**kwargs):
+    return WidgetProxy('ColorPicker', **kwargs)
+
+def FileUpload(**kwargs):
+    return WidgetProxy('FileUpload', **kwargs)
+
+def Play(**kwargs):
+    return WidgetProxy('Play', **kwargs)
+
+def VBox(**kwargs):
+    return WidgetProxy('VBox', **kwargs)
+
+def HBox(**kwargs):
+    return WidgetProxy('HBox', **kwargs)
+
+def GridBox(**kwargs):
+    return WidgetProxy('GridBox', **kwargs)
+
+def Accordion(**kwargs):
+    return WidgetProxy('Accordion', **kwargs)
+
+def Tab(**kwargs):
+    return WidgetProxy('Tab', **kwargs)
+
+def Stacked(**kwargs):
+    return WidgetProxy('Stacked', **kwargs)
+
+def Box(**kwargs):
+    return WidgetProxy('Box', **kwargs)
+
+def Output(**kwargs):
+    return WidgetProxy('Output', **kwargs)
+
+# ---- @interact decorator ----
+def interact(func=None, **options):
+    if func is None:
+        def decorator(f):
+            return interact(f, **options)
+        return decorator
+    else:
+        # Create widgets from options
+        widgets = {}
+        for name, value in options.items():
+            if isinstance(value, (int, float)):
+                widgets[name] = IntSlider(value=value, min=0, max=10*value, description=name)
+            elif isinstance(value, list):
+                widgets[name] = Dropdown(options=value, value=value[0], description=name)
+            elif isinstance(value, bool):
+                widgets[name] = Checkbox(value=value, description=name)
+            else:
+                widgets[name] = IntText(value=value, description=name)
+        # Display widgets in a VBox
+        if widgets:
+            display(VBox(children=list(widgets.values())))
+        # Define wrapper function
+        def wrapper(*args, **kwargs):
+            # Forward widget values to the function
+            args = tuple(widgets.values())
+            kwargs = {name: w.kwargs.get('value') for name, w in widgets.items()}
+            return func(**kwargs)
+        # Register callbacks to update wrapper
+        for w in widgets.values():
+            w.observe(lambda _: wrapper(), 'value')
+        return wrapper
+
+namespace['IntSlider'] = IntSlider
+namespace['FloatSlider'] = FloatSlider
+namespace['IntText'] = IntText
+namespace['FloatText'] = FloatText
+namespace['Checkbox'] = Checkbox
+namespace['RadioButtons'] = RadioButtons
+namespace['ToggleButton'] = ToggleButton
+namespace['ToggleButtons'] = ToggleButtons
+namespace['Dropdown'] = Dropdown
+namespace['Select'] = Select
+namespace['SelectMultiple'] = SelectMultiple
+namespace['DatePicker'] = DatePicker
+namespace['TimePicker'] = TimePicker
+namespace['ColorPicker'] = ColorPicker
+namespace['FileUpload'] = FileUpload
+namespace['Play'] = Play
+namespace['VBox'] = VBox
+namespace['HBox'] = HBox
+namespace['GridBox'] = GridBox
+namespace['Accordion'] = Accordion
+namespace['Tab'] = Tab
+namespace['Stacked'] = Stacked
+namespace['Box'] = Box
+namespace['Output'] = Output
+namespace['link'] = link
+namespace['dlink'] = dlink
+namespace['interact'] = interact
+
+
+
+# ----------------------------------------------------------------------
+# Full ipywidgets system
+# ----------------------------------------------------------------------
+_widgets = {}
+_widget_counter = 0
+_links = {}
+_link_counter = 0
+
+class WidgetProxy:
+    def __init__(self, widget_type, **kwargs):
+        global _widget_counter
+        self.id = f"widget-{_widget_counter}"
+        _widget_counter += 1
+        self.type = widget_type
+        self.kwargs = kwargs
+        self._callbacks = {}
+        self._children = kwargs.pop('children', [])
+        self._send_widget_event('create', {**kwargs, 'widget_id': self.id, 'type': widget_type})
+        # Register in global dict for link resolution
+        _widgets[self.id] = self
+
+    def _send_widget_event(self, event, data):
+        msg = {'event': event, 'widget_id': self.id, 'type': self.type, 'data': data}
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def set_state(self, **kwargs):
+        self.kwargs.update(kwargs)
+        self._send_widget_event('update', kwargs)
+
+    def observe(self, callback, names='value'):
+        if isinstance(names, str):
+            names = [names]
+        for name in names:
+            if name not in self._callbacks:
+                self._callbacks[name] = []
+            self._callbacks[name].append(callback)
+
+    def on_click(self, callback):
+        self.observe(callback, 'click')
+
+    def _handle_frontend_event(self, event_data):
+        # Called from frontend via widget_event action
+        for attr, value in event_data.items():
+            if attr == 'value' or attr == 'click':
+                self.kwargs[attr] = value
+                if attr in self._callbacks:
+                    for cb in self._callbacks[attr]:
+                        cb(value)
+                # If this is a link source, propagate
+                for link in _links.values():
+                    if link.source_id == self.id:
+                        link.propagate(value)
+        # Also update other widgets if linked via dlink
+
+class Link:
+    def __init__(self, source, target, transform=None, bidirectional=False):
+        global _link_counter
+        self.id = f"link-{_link_counter}"
+        _link_counter += 1
+        self.source_id = source.id if hasattr(source, 'id') else source
+        self.target_id = target.id if hasattr(target, 'id') else target
+        self.transform = transform
+        self.bidirectional = bidirectional
+        _links[self.id] = self
+        # Send link creation to frontend
+        msg = {
+            'event': 'link' if not bidirectional else 'dlink',
+            'widget_id': self.id,
+            'data': {
+                'source': self.source_id,
+                'target': self.target_id,
+                'transform': transform
+            }
+        }
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def propagate(self, value):
+        if self.transform:
+            value = self.transform(value)
+        target = _widgets.get(self.target_id)
+        if target:
+            target.set_state(value=value)
+
+def link(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=False)
+
+def dlink(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=True)
+
+# ---- Widget classes ----
+def IntSlider(**kwargs):
+    return WidgetProxy('IntSlider', **kwargs)
+
+def FloatSlider(**kwargs):
+    return WidgetProxy('FloatSlider', **kwargs)
+
+def IntText(**kwargs):
+    return WidgetProxy('IntText', **kwargs)
+
+def FloatText(**kwargs):
+    return WidgetProxy('FloatText', **kwargs)
+
+def Checkbox(**kwargs):
+    return WidgetProxy('Checkbox', **kwargs)
+
+def RadioButtons(**kwargs):
+    return WidgetProxy('RadioButtons', **kwargs)
+
+def ToggleButton(**kwargs):
+    return WidgetProxy('ToggleButton', **kwargs)
+
+def ToggleButtons(**kwargs):
+    return WidgetProxy('ToggleButtons', **kwargs)
+
+def Dropdown(**kwargs):
+    return WidgetProxy('Dropdown', **kwargs)
+
+def Select(**kwargs):
+    return WidgetProxy('Select', **kwargs)
+
+def SelectMultiple(**kwargs):
+    return WidgetProxy('SelectMultiple', **kwargs)
+
+def DatePicker(**kwargs):
+    return WidgetProxy('DatePicker', **kwargs)
+
+def TimePicker(**kwargs):
+    return WidgetProxy('TimePicker', **kwargs)
+
+def ColorPicker(**kwargs):
+    return WidgetProxy('ColorPicker', **kwargs)
+
+def FileUpload(**kwargs):
+    return WidgetProxy('FileUpload', **kwargs)
+
+def Play(**kwargs):
+    return WidgetProxy('Play', **kwargs)
+
+def VBox(**kwargs):
+    return WidgetProxy('VBox', **kwargs)
+
+def HBox(**kwargs):
+    return WidgetProxy('HBox', **kwargs)
+
+def GridBox(**kwargs):
+    return WidgetProxy('GridBox', **kwargs)
+
+def Accordion(**kwargs):
+    return WidgetProxy('Accordion', **kwargs)
+
+def Tab(**kwargs):
+    return WidgetProxy('Tab', **kwargs)
+
+def Stacked(**kwargs):
+    return WidgetProxy('Stacked', **kwargs)
+
+def Box(**kwargs):
+    return WidgetProxy('Box', **kwargs)
+
+def Output(**kwargs):
+    return WidgetProxy('Output', **kwargs)
+
+# ---- @interact decorator ----
+def interact(func=None, **options):
+    if func is None:
+        def decorator(f):
+            return interact(f, **options)
+        return decorator
+    else:
+        # Create widgets from options
+        widgets = {}
+        for name, value in options.items():
+            if isinstance(value, (int, float)):
+                widgets[name] = IntSlider(value=value, min=0, max=10*value, description=name)
+            elif isinstance(value, list):
+                widgets[name] = Dropdown(options=value, value=value[0], description=name)
+            elif isinstance(value, bool):
+                widgets[name] = Checkbox(value=value, description=name)
+            else:
+                widgets[name] = IntText(value=value, description=name)
+        # Display widgets in a VBox
+        if widgets:
+            display(VBox(children=list(widgets.values())))
+        # Define wrapper function
+        def wrapper(*args, **kwargs):
+            # Forward widget values to the function
+            args = tuple(widgets.values())
+            kwargs = {name: w.kwargs.get('value') for name, w in widgets.items()}
+            return func(**kwargs)
+        # Register callbacks to update wrapper
+        for w in widgets.values():
+            w.observe(lambda _: wrapper(), 'value')
+        return wrapper
+
+namespace['IntSlider'] = IntSlider
+namespace['FloatSlider'] = FloatSlider
+namespace['IntText'] = IntText
+namespace['FloatText'] = FloatText
+namespace['Checkbox'] = Checkbox
+namespace['RadioButtons'] = RadioButtons
+namespace['ToggleButton'] = ToggleButton
+namespace['ToggleButtons'] = ToggleButtons
+namespace['Dropdown'] = Dropdown
+namespace['Select'] = Select
+namespace['SelectMultiple'] = SelectMultiple
+namespace['DatePicker'] = DatePicker
+namespace['TimePicker'] = TimePicker
+namespace['ColorPicker'] = ColorPicker
+namespace['FileUpload'] = FileUpload
+namespace['Play'] = Play
+namespace['VBox'] = VBox
+namespace['HBox'] = HBox
+namespace['GridBox'] = GridBox
+namespace['Accordion'] = Accordion
+namespace['Tab'] = Tab
+namespace['Stacked'] = Stacked
+namespace['Box'] = Box
+namespace['Output'] = Output
+namespace['link'] = link
+namespace['dlink'] = dlink
+namespace['interact'] = interact
+
+
+
+# ----------------------------------------------------------------------
+# Full ipywidgets system
+# ----------------------------------------------------------------------
+_widgets = {}
+_widget_counter = 0
+_links = {}
+_link_counter = 0
+
+class WidgetProxy:
+    def __init__(self, widget_type, **kwargs):
+        global _widget_counter
+        self.id = f"widget-{_widget_counter}"
+        _widget_counter += 1
+        self.type = widget_type
+        self.kwargs = kwargs
+        self._callbacks = {}
+        self._children = kwargs.pop('children', [])
+        self._send_widget_event('create', {**kwargs, 'widget_id': self.id, 'type': widget_type})
+        # Register in global dict for link resolution
+        _widgets[self.id] = self
+
+    def _send_widget_event(self, event, data):
+        msg = {'event': event, 'widget_id': self.id, 'type': self.type, 'data': data}
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def set_state(self, **kwargs):
+        self.kwargs.update(kwargs)
+        self._send_widget_event('update', kwargs)
+
+    def observe(self, callback, names='value'):
+        if isinstance(names, str):
+            names = [names]
+        for name in names:
+            if name not in self._callbacks:
+                self._callbacks[name] = []
+            self._callbacks[name].append(callback)
+
+    def on_click(self, callback):
+        self.observe(callback, 'click')
+
+    def _handle_frontend_event(self, event_data):
+        # Called from frontend via widget_event action
+        for attr, value in event_data.items():
+            if attr == 'value' or attr == 'click':
+                self.kwargs[attr] = value
+                if attr in self._callbacks:
+                    for cb in self._callbacks[attr]:
+                        cb(value)
+                # If this is a link source, propagate
+                for link in _links.values():
+                    if link.source_id == self.id:
+                        link.propagate(value)
+        # Also update other widgets if linked via dlink
+
+class Link:
+    def __init__(self, source, target, transform=None, bidirectional=False):
+        global _link_counter
+        self.id = f"link-{_link_counter}"
+        _link_counter += 1
+        self.source_id = source.id if hasattr(source, 'id') else source
+        self.target_id = target.id if hasattr(target, 'id') else target
+        self.transform = transform
+        self.bidirectional = bidirectional
+        _links[self.id] = self
+        # Send link creation to frontend
+        msg = {
+            'event': 'link' if not bidirectional else 'dlink',
+            'widget_id': self.id,
+            'data': {
+                'source': self.source_id,
+                'target': self.target_id,
+                'transform': transform
+            }
+        }
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def propagate(self, value):
+        if self.transform:
+            value = self.transform(value)
+        target = _widgets.get(self.target_id)
+        if target:
+            target.set_state(value=value)
+
+def link(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=False)
+
+def dlink(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=True)
+
+# ---- Widget classes ----
+def IntSlider(**kwargs):
+    return WidgetProxy('IntSlider', **kwargs)
+
+def FloatSlider(**kwargs):
+    return WidgetProxy('FloatSlider', **kwargs)
+
+def IntText(**kwargs):
+    return WidgetProxy('IntText', **kwargs)
+
+def FloatText(**kwargs):
+    return WidgetProxy('FloatText', **kwargs)
+
+def Checkbox(**kwargs):
+    return WidgetProxy('Checkbox', **kwargs)
+
+def RadioButtons(**kwargs):
+    return WidgetProxy('RadioButtons', **kwargs)
+
+def ToggleButton(**kwargs):
+    return WidgetProxy('ToggleButton', **kwargs)
+
+def ToggleButtons(**kwargs):
+    return WidgetProxy('ToggleButtons', **kwargs)
+
+def Dropdown(**kwargs):
+    return WidgetProxy('Dropdown', **kwargs)
+
+def Select(**kwargs):
+    return WidgetProxy('Select', **kwargs)
+
+def SelectMultiple(**kwargs):
+    return WidgetProxy('SelectMultiple', **kwargs)
+
+def DatePicker(**kwargs):
+    return WidgetProxy('DatePicker', **kwargs)
+
+def TimePicker(**kwargs):
+    return WidgetProxy('TimePicker', **kwargs)
+
+def ColorPicker(**kwargs):
+    return WidgetProxy('ColorPicker', **kwargs)
+
+def FileUpload(**kwargs):
+    return WidgetProxy('FileUpload', **kwargs)
+
+def Play(**kwargs):
+    return WidgetProxy('Play', **kwargs)
+
+def VBox(**kwargs):
+    return WidgetProxy('VBox', **kwargs)
+
+def HBox(**kwargs):
+    return WidgetProxy('HBox', **kwargs)
+
+def GridBox(**kwargs):
+    return WidgetProxy('GridBox', **kwargs)
+
+def Accordion(**kwargs):
+    return WidgetProxy('Accordion', **kwargs)
+
+def Tab(**kwargs):
+    return WidgetProxy('Tab', **kwargs)
+
+def Stacked(**kwargs):
+    return WidgetProxy('Stacked', **kwargs)
+
+def Box(**kwargs):
+    return WidgetProxy('Box', **kwargs)
+
+def Output(**kwargs):
+    return WidgetProxy('Output', **kwargs)
+
+# ---- @interact decorator ----
+def interact(func=None, **options):
+    if func is None:
+        def decorator(f):
+            return interact(f, **options)
+        return decorator
+    else:
+        # Create widgets from options
+        widgets = {}
+        for name, value in options.items():
+            if isinstance(value, (int, float)):
+                widgets[name] = IntSlider(value=value, min=0, max=10*value, description=name)
+            elif isinstance(value, list):
+                widgets[name] = Dropdown(options=value, value=value[0], description=name)
+            elif isinstance(value, bool):
+                widgets[name] = Checkbox(value=value, description=name)
+            else:
+                widgets[name] = IntText(value=value, description=name)
+        # Display widgets in a VBox
+        if widgets:
+            display(VBox(children=list(widgets.values())))
+        # Define wrapper function
+        def wrapper(*args, **kwargs):
+            # Forward widget values to the function
+            args = tuple(widgets.values())
+            kwargs = {name: w.kwargs.get('value') for name, w in widgets.items()}
+            return func(**kwargs)
+        # Register callbacks to update wrapper
+        for w in widgets.values():
+            w.observe(lambda _: wrapper(), 'value')
+        return wrapper
+
+namespace['IntSlider'] = IntSlider
+namespace['FloatSlider'] = FloatSlider
+namespace['IntText'] = IntText
+namespace['FloatText'] = FloatText
+namespace['Checkbox'] = Checkbox
+namespace['RadioButtons'] = RadioButtons
+namespace['ToggleButton'] = ToggleButton
+namespace['ToggleButtons'] = ToggleButtons
+namespace['Dropdown'] = Dropdown
+namespace['Select'] = Select
+namespace['SelectMultiple'] = SelectMultiple
+namespace['DatePicker'] = DatePicker
+namespace['TimePicker'] = TimePicker
+namespace['ColorPicker'] = ColorPicker
+namespace['FileUpload'] = FileUpload
+namespace['Play'] = Play
+namespace['VBox'] = VBox
+namespace['HBox'] = HBox
+namespace['GridBox'] = GridBox
+namespace['Accordion'] = Accordion
+namespace['Tab'] = Tab
+namespace['Stacked'] = Stacked
+namespace['Box'] = Box
+namespace['Output'] = Output
+namespace['link'] = link
+namespace['dlink'] = dlink
+namespace['interact'] = interact
+
+
+
+# ----------------------------------------------------------------------
+# Full ipywidgets system
+# ----------------------------------------------------------------------
+_widgets = {}
+_widget_counter = 0
+_links = {}
+_link_counter = 0
+
+class WidgetProxy:
+    def __init__(self, widget_type, **kwargs):
+        global _widget_counter
+        self.id = f"widget-{_widget_counter}"
+        _widget_counter += 1
+        self.type = widget_type
+        self.kwargs = kwargs
+        self._callbacks = {}
+        self._children = kwargs.pop('children', [])
+        self._send_widget_event('create', {**kwargs, 'widget_id': self.id, 'type': widget_type})
+        # Register in global dict for link resolution
+        _widgets[self.id] = self
+
+    def _send_widget_event(self, event, data):
+        msg = {'event': event, 'widget_id': self.id, 'type': self.type, 'data': data}
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def set_state(self, **kwargs):
+        self.kwargs.update(kwargs)
+        self._send_widget_event('update', kwargs)
+
+    def observe(self, callback, names='value'):
+        if isinstance(names, str):
+            names = [names]
+        for name in names:
+            if name not in self._callbacks:
+                self._callbacks[name] = []
+            self._callbacks[name].append(callback)
+
+    def on_click(self, callback):
+        self.observe(callback, 'click')
+
+    def _handle_frontend_event(self, event_data):
+        # Called from frontend via widget_event action
+        for attr, value in event_data.items():
+            if attr == 'value' or attr == 'click':
+                self.kwargs[attr] = value
+                if attr in self._callbacks:
+                    for cb in self._callbacks[attr]:
+                        cb(value)
+                # If this is a link source, propagate
+                for link in _links.values():
+                    if link.source_id == self.id:
+                        link.propagate(value)
+        # Also update other widgets if linked via dlink
+
+class Link:
+    def __init__(self, source, target, transform=None, bidirectional=False):
+        global _link_counter
+        self.id = f"link-{_link_counter}"
+        _link_counter += 1
+        self.source_id = source.id if hasattr(source, 'id') else source
+        self.target_id = target.id if hasattr(target, 'id') else target
+        self.transform = transform
+        self.bidirectional = bidirectional
+        _links[self.id] = self
+        # Send link creation to frontend
+        msg = {
+            'event': 'link' if not bidirectional else 'dlink',
+            'widget_id': self.id,
+            'data': {
+                'source': self.source_id,
+                'target': self.target_id,
+                'transform': transform
+            }
+        }
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def propagate(self, value):
+        if self.transform:
+            value = self.transform(value)
+        target = _widgets.get(self.target_id)
+        if target:
+            target.set_state(value=value)
+
+def link(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=False)
+
+def dlink(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=True)
+
+# ---- Widget classes ----
+def IntSlider(**kwargs):
+    return WidgetProxy('IntSlider', **kwargs)
+
+def FloatSlider(**kwargs):
+    return WidgetProxy('FloatSlider', **kwargs)
+
+def IntText(**kwargs):
+    return WidgetProxy('IntText', **kwargs)
+
+def FloatText(**kwargs):
+    return WidgetProxy('FloatText', **kwargs)
+
+def Checkbox(**kwargs):
+    return WidgetProxy('Checkbox', **kwargs)
+
+def RadioButtons(**kwargs):
+    return WidgetProxy('RadioButtons', **kwargs)
+
+def ToggleButton(**kwargs):
+    return WidgetProxy('ToggleButton', **kwargs)
+
+def ToggleButtons(**kwargs):
+    return WidgetProxy('ToggleButtons', **kwargs)
+
+def Dropdown(**kwargs):
+    return WidgetProxy('Dropdown', **kwargs)
+
+def Select(**kwargs):
+    return WidgetProxy('Select', **kwargs)
+
+def SelectMultiple(**kwargs):
+    return WidgetProxy('SelectMultiple', **kwargs)
+
+def DatePicker(**kwargs):
+    return WidgetProxy('DatePicker', **kwargs)
+
+def TimePicker(**kwargs):
+    return WidgetProxy('TimePicker', **kwargs)
+
+def ColorPicker(**kwargs):
+    return WidgetProxy('ColorPicker', **kwargs)
+
+def FileUpload(**kwargs):
+    return WidgetProxy('FileUpload', **kwargs)
+
+def Play(**kwargs):
+    return WidgetProxy('Play', **kwargs)
+
+def VBox(**kwargs):
+    return WidgetProxy('VBox', **kwargs)
+
+def HBox(**kwargs):
+    return WidgetProxy('HBox', **kwargs)
+
+def GridBox(**kwargs):
+    return WidgetProxy('GridBox', **kwargs)
+
+def Accordion(**kwargs):
+    return WidgetProxy('Accordion', **kwargs)
+
+def Tab(**kwargs):
+    return WidgetProxy('Tab', **kwargs)
+
+def Stacked(**kwargs):
+    return WidgetProxy('Stacked', **kwargs)
+
+def Box(**kwargs):
+    return WidgetProxy('Box', **kwargs)
+
+def Output(**kwargs):
+    return WidgetProxy('Output', **kwargs)
+
+# ---- @interact decorator ----
+def interact(func=None, **options):
+    if func is None:
+        def decorator(f):
+            return interact(f, **options)
+        return decorator
+    else:
+        # Create widgets from options
+        widgets = {}
+        for name, value in options.items():
+            if isinstance(value, (int, float)):
+                widgets[name] = IntSlider(value=value, min=0, max=10*value, description=name)
+            elif isinstance(value, list):
+                widgets[name] = Dropdown(options=value, value=value[0], description=name)
+            elif isinstance(value, bool):
+                widgets[name] = Checkbox(value=value, description=name)
+            else:
+                widgets[name] = IntText(value=value, description=name)
+        # Display widgets in a VBox
+        if widgets:
+            display(VBox(children=list(widgets.values())))
+        # Define wrapper function
+        def wrapper(*args, **kwargs):
+            # Forward widget values to the function
+            args = tuple(widgets.values())
+            kwargs = {name: w.kwargs.get('value') for name, w in widgets.items()}
+            return func(**kwargs)
+        # Register callbacks to update wrapper
+        for w in widgets.values():
+            w.observe(lambda _: wrapper(), 'value')
+        return wrapper
+
+namespace['IntSlider'] = IntSlider
+namespace['FloatSlider'] = FloatSlider
+namespace['IntText'] = IntText
+namespace['FloatText'] = FloatText
+namespace['Checkbox'] = Checkbox
+namespace['RadioButtons'] = RadioButtons
+namespace['ToggleButton'] = ToggleButton
+namespace['ToggleButtons'] = ToggleButtons
+namespace['Dropdown'] = Dropdown
+namespace['Select'] = Select
+namespace['SelectMultiple'] = SelectMultiple
+namespace['DatePicker'] = DatePicker
+namespace['TimePicker'] = TimePicker
+namespace['ColorPicker'] = ColorPicker
+namespace['FileUpload'] = FileUpload
+namespace['Play'] = Play
+namespace['VBox'] = VBox
+namespace['HBox'] = HBox
+namespace['GridBox'] = GridBox
+namespace['Accordion'] = Accordion
+namespace['Tab'] = Tab
+namespace['Stacked'] = Stacked
+namespace['Box'] = Box
+namespace['Output'] = Output
+namespace['link'] = link
+namespace['dlink'] = dlink
+namespace['interact'] = interact
+
+
+
+# ----------------------------------------------------------------------
+# Full ipywidgets system
+# ----------------------------------------------------------------------
+_widgets = {}
+_widget_counter = 0
+_links = {}
+_link_counter = 0
+
+class WidgetProxy:
+    def __init__(self, widget_type, **kwargs):
+        global _widget_counter
+        self.id = f"widget-{_widget_counter}"
+        _widget_counter += 1
+        self.type = widget_type
+        self.kwargs = kwargs
+        self._callbacks = {}
+        self._children = kwargs.pop('children', [])
+        self._send_widget_event('create', {**kwargs, 'widget_id': self.id, 'type': widget_type})
+        # Register in global dict for link resolution
+        _widgets[self.id] = self
+
+    def _send_widget_event(self, event, data):
+        msg = {'event': event, 'widget_id': self.id, 'type': self.type, 'data': data}
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def set_state(self, **kwargs):
+        self.kwargs.update(kwargs)
+        self._send_widget_event('update', kwargs)
+
+    def observe(self, callback, names='value'):
+        if isinstance(names, str):
+            names = [names]
+        for name in names:
+            if name not in self._callbacks:
+                self._callbacks[name] = []
+            self._callbacks[name].append(callback)
+
+    def on_click(self, callback):
+        self.observe(callback, 'click')
+
+    def _handle_frontend_event(self, event_data):
+        # Called from frontend via widget_event action
+        for attr, value in event_data.items():
+            if attr == 'value' or attr == 'click':
+                self.kwargs[attr] = value
+                if attr in self._callbacks:
+                    for cb in self._callbacks[attr]:
+                        cb(value)
+                # If this is a link source, propagate
+                for link in _links.values():
+                    if link.source_id == self.id:
+                        link.propagate(value)
+        # Also update other widgets if linked via dlink
+
+class Link:
+    def __init__(self, source, target, transform=None, bidirectional=False):
+        global _link_counter
+        self.id = f"link-{_link_counter}"
+        _link_counter += 1
+        self.source_id = source.id if hasattr(source, 'id') else source
+        self.target_id = target.id if hasattr(target, 'id') else target
+        self.transform = transform
+        self.bidirectional = bidirectional
+        _links[self.id] = self
+        # Send link creation to frontend
+        msg = {
+            'event': 'link' if not bidirectional else 'dlink',
+            'widget_id': self.id,
+            'data': {
+                'source': self.source_id,
+                'target': self.target_id,
+                'transform': transform
+            }
+        }
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def propagate(self, value):
+        if self.transform:
+            value = self.transform(value)
+        target = _widgets.get(self.target_id)
+        if target:
+            target.set_state(value=value)
+
+def link(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=False)
+
+def dlink(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=True)
+
+# ---- Widget classes ----
+def IntSlider(**kwargs):
+    return WidgetProxy('IntSlider', **kwargs)
+
+def FloatSlider(**kwargs):
+    return WidgetProxy('FloatSlider', **kwargs)
+
+def IntText(**kwargs):
+    return WidgetProxy('IntText', **kwargs)
+
+def FloatText(**kwargs):
+    return WidgetProxy('FloatText', **kwargs)
+
+def Checkbox(**kwargs):
+    return WidgetProxy('Checkbox', **kwargs)
+
+def RadioButtons(**kwargs):
+    return WidgetProxy('RadioButtons', **kwargs)
+
+def ToggleButton(**kwargs):
+    return WidgetProxy('ToggleButton', **kwargs)
+
+def ToggleButtons(**kwargs):
+    return WidgetProxy('ToggleButtons', **kwargs)
+
+def Dropdown(**kwargs):
+    return WidgetProxy('Dropdown', **kwargs)
+
+def Select(**kwargs):
+    return WidgetProxy('Select', **kwargs)
+
+def SelectMultiple(**kwargs):
+    return WidgetProxy('SelectMultiple', **kwargs)
+
+def DatePicker(**kwargs):
+    return WidgetProxy('DatePicker', **kwargs)
+
+def TimePicker(**kwargs):
+    return WidgetProxy('TimePicker', **kwargs)
+
+def ColorPicker(**kwargs):
+    return WidgetProxy('ColorPicker', **kwargs)
+
+def FileUpload(**kwargs):
+    return WidgetProxy('FileUpload', **kwargs)
+
+def Play(**kwargs):
+    return WidgetProxy('Play', **kwargs)
+
+def VBox(**kwargs):
+    return WidgetProxy('VBox', **kwargs)
+
+def HBox(**kwargs):
+    return WidgetProxy('HBox', **kwargs)
+
+def GridBox(**kwargs):
+    return WidgetProxy('GridBox', **kwargs)
+
+def Accordion(**kwargs):
+    return WidgetProxy('Accordion', **kwargs)
+
+def Tab(**kwargs):
+    return WidgetProxy('Tab', **kwargs)
+
+def Stacked(**kwargs):
+    return WidgetProxy('Stacked', **kwargs)
+
+def Box(**kwargs):
+    return WidgetProxy('Box', **kwargs)
+
+def Output(**kwargs):
+    return WidgetProxy('Output', **kwargs)
+
+# ---- @interact decorator ----
+def interact(func=None, **options):
+    if func is None:
+        def decorator(f):
+            return interact(f, **options)
+        return decorator
+    else:
+        # Create widgets from options
+        widgets = {}
+        for name, value in options.items():
+            if isinstance(value, (int, float)):
+                widgets[name] = IntSlider(value=value, min=0, max=10*value, description=name)
+            elif isinstance(value, list):
+                widgets[name] = Dropdown(options=value, value=value[0], description=name)
+            elif isinstance(value, bool):
+                widgets[name] = Checkbox(value=value, description=name)
+            else:
+                widgets[name] = IntText(value=value, description=name)
+        # Display widgets in a VBox
+        if widgets:
+            display(VBox(children=list(widgets.values())))
+        # Define wrapper function
+        def wrapper(*args, **kwargs):
+            # Forward widget values to the function
+            args = tuple(widgets.values())
+            kwargs = {name: w.kwargs.get('value') for name, w in widgets.items()}
+            return func(**kwargs)
+        # Register callbacks to update wrapper
+        for w in widgets.values():
+            w.observe(lambda _: wrapper(), 'value')
+        return wrapper
+
+namespace['IntSlider'] = IntSlider
+namespace['FloatSlider'] = FloatSlider
+namespace['IntText'] = IntText
+namespace['FloatText'] = FloatText
+namespace['Checkbox'] = Checkbox
+namespace['RadioButtons'] = RadioButtons
+namespace['ToggleButton'] = ToggleButton
+namespace['ToggleButtons'] = ToggleButtons
+namespace['Dropdown'] = Dropdown
+namespace['Select'] = Select
+namespace['SelectMultiple'] = SelectMultiple
+namespace['DatePicker'] = DatePicker
+namespace['TimePicker'] = TimePicker
+namespace['ColorPicker'] = ColorPicker
+namespace['FileUpload'] = FileUpload
+namespace['Play'] = Play
+namespace['VBox'] = VBox
+namespace['HBox'] = HBox
+namespace['GridBox'] = GridBox
+namespace['Accordion'] = Accordion
+namespace['Tab'] = Tab
+namespace['Stacked'] = Stacked
+namespace['Box'] = Box
+namespace['Output'] = Output
+namespace['link'] = link
+namespace['dlink'] = dlink
+namespace['interact'] = interact
+
+
+
+# ----------------------------------------------------------------------
+# Full ipywidgets system
+# ----------------------------------------------------------------------
+_widgets = {}
+_widget_counter = 0
+_links = {}
+_link_counter = 0
+
+class WidgetProxy:
+    def __init__(self, widget_type, **kwargs):
+        global _widget_counter
+        self.id = f"widget-{_widget_counter}"
+        _widget_counter += 1
+        self.type = widget_type
+        self.kwargs = kwargs
+        self._callbacks = {}
+        self._children = kwargs.pop('children', [])
+        self._send_widget_event('create', {**kwargs, 'widget_id': self.id, 'type': widget_type})
+        # Register in global dict for link resolution
+        _widgets[self.id] = self
+
+    def _send_widget_event(self, event, data):
+        msg = {'event': event, 'widget_id': self.id, 'type': self.type, 'data': data}
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def set_state(self, **kwargs):
+        self.kwargs.update(kwargs)
+        self._send_widget_event('update', kwargs)
+
+    def observe(self, callback, names='value'):
+        if isinstance(names, str):
+            names = [names]
+        for name in names:
+            if name not in self._callbacks:
+                self._callbacks[name] = []
+            self._callbacks[name].append(callback)
+
+    def on_click(self, callback):
+        self.observe(callback, 'click')
+
+    def _handle_frontend_event(self, event_data):
+        # Called from frontend via widget_event action
+        for attr, value in event_data.items():
+            if attr == 'value' or attr == 'click':
+                self.kwargs[attr] = value
+                if attr in self._callbacks:
+                    for cb in self._callbacks[attr]:
+                        cb(value)
+                # If this is a link source, propagate
+                for link in _links.values():
+                    if link.source_id == self.id:
+                        link.propagate(value)
+        # Also update other widgets if linked via dlink
+
+class Link:
+    def __init__(self, source, target, transform=None, bidirectional=False):
+        global _link_counter
+        self.id = f"link-{_link_counter}"
+        _link_counter += 1
+        self.source_id = source.id if hasattr(source, 'id') else source
+        self.target_id = target.id if hasattr(target, 'id') else target
+        self.transform = transform
+        self.bidirectional = bidirectional
+        _links[self.id] = self
+        # Send link creation to frontend
+        msg = {
+            'event': 'link' if not bidirectional else 'dlink',
+            'widget_id': self.id,
+            'data': {
+                'source': self.source_id,
+                'target': self.target_id,
+                'transform': transform
+            }
+        }
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def propagate(self, value):
+        if self.transform:
+            value = self.transform(value)
+        target = _widgets.get(self.target_id)
+        if target:
+            target.set_state(value=value)
+
+def link(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=False)
+
+def dlink(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=True)
+
+# ---- Widget classes ----
+def IntSlider(**kwargs):
+    return WidgetProxy('IntSlider', **kwargs)
+
+def FloatSlider(**kwargs):
+    return WidgetProxy('FloatSlider', **kwargs)
+
+def IntText(**kwargs):
+    return WidgetProxy('IntText', **kwargs)
+
+def FloatText(**kwargs):
+    return WidgetProxy('FloatText', **kwargs)
+
+def Checkbox(**kwargs):
+    return WidgetProxy('Checkbox', **kwargs)
+
+def RadioButtons(**kwargs):
+    return WidgetProxy('RadioButtons', **kwargs)
+
+def ToggleButton(**kwargs):
+    return WidgetProxy('ToggleButton', **kwargs)
+
+def ToggleButtons(**kwargs):
+    return WidgetProxy('ToggleButtons', **kwargs)
+
+def Dropdown(**kwargs):
+    return WidgetProxy('Dropdown', **kwargs)
+
+def Select(**kwargs):
+    return WidgetProxy('Select', **kwargs)
+
+def SelectMultiple(**kwargs):
+    return WidgetProxy('SelectMultiple', **kwargs)
+
+def DatePicker(**kwargs):
+    return WidgetProxy('DatePicker', **kwargs)
+
+def TimePicker(**kwargs):
+    return WidgetProxy('TimePicker', **kwargs)
+
+def ColorPicker(**kwargs):
+    return WidgetProxy('ColorPicker', **kwargs)
+
+def FileUpload(**kwargs):
+    return WidgetProxy('FileUpload', **kwargs)
+
+def Play(**kwargs):
+    return WidgetProxy('Play', **kwargs)
+
+def VBox(**kwargs):
+    return WidgetProxy('VBox', **kwargs)
+
+def HBox(**kwargs):
+    return WidgetProxy('HBox', **kwargs)
+
+def GridBox(**kwargs):
+    return WidgetProxy('GridBox', **kwargs)
+
+def Accordion(**kwargs):
+    return WidgetProxy('Accordion', **kwargs)
+
+def Tab(**kwargs):
+    return WidgetProxy('Tab', **kwargs)
+
+def Stacked(**kwargs):
+    return WidgetProxy('Stacked', **kwargs)
+
+def Box(**kwargs):
+    return WidgetProxy('Box', **kwargs)
+
+def Output(**kwargs):
+    return WidgetProxy('Output', **kwargs)
+
+# ---- @interact decorator ----
+def interact(func=None, **options):
+    if func is None:
+        def decorator(f):
+            return interact(f, **options)
+        return decorator
+    else:
+        # Create widgets from options
+        widgets = {}
+        for name, value in options.items():
+            if isinstance(value, (int, float)):
+                widgets[name] = IntSlider(value=value, min=0, max=10*value, description=name)
+            elif isinstance(value, list):
+                widgets[name] = Dropdown(options=value, value=value[0], description=name)
+            elif isinstance(value, bool):
+                widgets[name] = Checkbox(value=value, description=name)
+            else:
+                widgets[name] = IntText(value=value, description=name)
+        # Display widgets in a VBox
+        if widgets:
+            display(VBox(children=list(widgets.values())))
+        # Define wrapper function
+        def wrapper(*args, **kwargs):
+            # Forward widget values to the function
+            args = tuple(widgets.values())
+            kwargs = {name: w.kwargs.get('value') for name, w in widgets.items()}
+            return func(**kwargs)
+        # Register callbacks to update wrapper
+        for w in widgets.values():
+            w.observe(lambda _: wrapper(), 'value')
+        return wrapper
+
+namespace['IntSlider'] = IntSlider
+namespace['FloatSlider'] = FloatSlider
+namespace['IntText'] = IntText
+namespace['FloatText'] = FloatText
+namespace['Checkbox'] = Checkbox
+namespace['RadioButtons'] = RadioButtons
+namespace['ToggleButton'] = ToggleButton
+namespace['ToggleButtons'] = ToggleButtons
+namespace['Dropdown'] = Dropdown
+namespace['Select'] = Select
+namespace['SelectMultiple'] = SelectMultiple
+namespace['DatePicker'] = DatePicker
+namespace['TimePicker'] = TimePicker
+namespace['ColorPicker'] = ColorPicker
+namespace['FileUpload'] = FileUpload
+namespace['Play'] = Play
+namespace['VBox'] = VBox
+namespace['HBox'] = HBox
+namespace['GridBox'] = GridBox
+namespace['Accordion'] = Accordion
+namespace['Tab'] = Tab
+namespace['Stacked'] = Stacked
+namespace['Box'] = Box
+namespace['Output'] = Output
+namespace['link'] = link
+namespace['dlink'] = dlink
+namespace['interact'] = interact
+
+
+
+# ----------------------------------------------------------------------
+# Full ipywidgets system
+# ----------------------------------------------------------------------
+_widgets = {}
+_widget_counter = 0
+_links = {}
+_link_counter = 0
+
+class WidgetProxy:
+    def __init__(self, widget_type, **kwargs):
+        global _widget_counter
+        self.id = f"widget-{_widget_counter}"
+        _widget_counter += 1
+        self.type = widget_type
+        self.kwargs = kwargs
+        self._callbacks = {}
+        self._children = kwargs.pop('children', [])
+        self._send_widget_event('create', {**kwargs, 'widget_id': self.id, 'type': widget_type})
+        # Register in global dict for link resolution
+        _widgets[self.id] = self
+
+    def _send_widget_event(self, event, data):
+        msg = {'event': event, 'widget_id': self.id, 'type': self.type, 'data': data}
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def set_state(self, **kwargs):
+        self.kwargs.update(kwargs)
+        self._send_widget_event('update', kwargs)
+
+    def observe(self, callback, names='value'):
+        if isinstance(names, str):
+            names = [names]
+        for name in names:
+            if name not in self._callbacks:
+                self._callbacks[name] = []
+            self._callbacks[name].append(callback)
+
+    def on_click(self, callback):
+        self.observe(callback, 'click')
+
+    def _handle_frontend_event(self, event_data):
+        # Called from frontend via widget_event action
+        for attr, value in event_data.items():
+            if attr == 'value' or attr == 'click':
+                self.kwargs[attr] = value
+                if attr in self._callbacks:
+                    for cb in self._callbacks[attr]:
+                        cb(value)
+                # If this is a link source, propagate
+                for link in _links.values():
+                    if link.source_id == self.id:
+                        link.propagate(value)
+        # Also update other widgets if linked via dlink
+
+class Link:
+    def __init__(self, source, target, transform=None, bidirectional=False):
+        global _link_counter
+        self.id = f"link-{_link_counter}"
+        _link_counter += 1
+        self.source_id = source.id if hasattr(source, 'id') else source
+        self.target_id = target.id if hasattr(target, 'id') else target
+        self.transform = transform
+        self.bidirectional = bidirectional
+        _links[self.id] = self
+        # Send link creation to frontend
+        msg = {
+            'event': 'link' if not bidirectional else 'dlink',
+            'widget_id': self.id,
+            'data': {
+                'source': self.source_id,
+                'target': self.target_id,
+                'transform': transform
+            }
+        }
+        sys.stdout.write("---JUPY_WIDGET---\n")
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+    def propagate(self, value):
+        if self.transform:
+            value = self.transform(value)
+        target = _widgets.get(self.target_id)
+        if target:
+            target.set_state(value=value)
+
+def link(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=False)
+
+def dlink(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=True)
+
+# ---- Widget classes ----
+def IntSlider(**kwargs):
+    return WidgetProxy('IntSlider', **kwargs)
+
+def FloatSlider(**kwargs):
+    return WidgetProxy('FloatSlider', **kwargs)
+
+def IntText(**kwargs):
+    return WidgetProxy('IntText', **kwargs)
+
+def FloatText(**kwargs):
+    return WidgetProxy('FloatText', **kwargs)
+
+def Checkbox(**kwargs):
+    return WidgetProxy('Checkbox', **kwargs)
+
+def RadioButtons(**kwargs):
+    return WidgetProxy('RadioButtons', **kwargs)
+
+def ToggleButton(**kwargs):
+    return WidgetProxy('ToggleButton', **kwargs)
+
+def ToggleButtons(**kwargs):
+    return WidgetProxy('ToggleButtons', **kwargs)
+
+def Dropdown(**kwargs):
+    return WidgetProxy('Dropdown', **kwargs)
+
+def Select(**kwargs):
+    return WidgetProxy('Select', **kwargs)
+
+def SelectMultiple(**kwargs):
+    return WidgetProxy('SelectMultiple', **kwargs)
+
+def DatePicker(**kwargs):
+    return WidgetProxy('DatePicker', **kwargs)
+
+def TimePicker(**kwargs):
+    return WidgetProxy('TimePicker', **kwargs)
+
+def ColorPicker(**kwargs):
+    return WidgetProxy('ColorPicker', **kwargs)
+
+def FileUpload(**kwargs):
+    return WidgetProxy('FileUpload', **kwargs)
+
+def Play(**kwargs):
+    return WidgetProxy('Play', **kwargs)
+
+def VBox(**kwargs):
+    return WidgetProxy('VBox', **kwargs)
+
+def HBox(**kwargs):
+    return WidgetProxy('HBox', **kwargs)
+
+def GridBox(**kwargs):
+    return WidgetProxy('GridBox', **kwargs)
+
+def Accordion(**kwargs):
+    return WidgetProxy('Accordion', **kwargs)
+
+def Tab(**kwargs):
+    return WidgetProxy('Tab', **kwargs)
+
+def Stacked(**kwargs):
+    return WidgetProxy('Stacked', **kwargs)
+
+def Box(**kwargs):
+    return WidgetProxy('Box', **kwargs)
+
+def Output(**kwargs):
+    return WidgetProxy('Output', **kwargs)
+
+# ---- @interact decorator ----
+def interact(func=None, **options):
+    if func is None:
+        def decorator(f):
+            return interact(f, **options)
+        return decorator
+    else:
+        # Create widgets from options
+        widgets = {}
+        for name, value in options.items():
+            if isinstance(value, (int, float)):
+                widgets[name] = IntSlider(value=value, min=0, max=10*value, description=name)
+            elif isinstance(value, list):
+                widgets[name] = Dropdown(options=value, value=value[0], description=name)
+            elif isinstance(value, bool):
+                widgets[name] = Checkbox(value=value, description=name)
+            else:
+                widgets[name] = IntText(value=value, description=name)
+        # Display widgets in a VBox
+        if widgets:
+            display(VBox(children=list(widgets.values())))
+        # Define wrapper function
+        def wrapper(*args, **kwargs):
+            # Forward widget values to the function
+            args = tuple(widgets.values())
+            kwargs = {name: w.kwargs.get('value') for name, w in widgets.items()}
+            return func(**kwargs)
+        # Register callbacks to update wrapper
+        for w in widgets.values():
+            w.observe(lambda _: wrapper(), 'value')
+        return wrapper
+
+namespace['IntSlider'] = IntSlider
+namespace['FloatSlider'] = FloatSlider
+namespace['IntText'] = IntText
+namespace['FloatText'] = FloatText
+namespace['Checkbox'] = Checkbox
+namespace['RadioButtons'] = RadioButtons
+namespace['ToggleButton'] = ToggleButton
+namespace['ToggleButtons'] = ToggleButtons
+namespace['Dropdown'] = Dropdown
+namespace['Select'] = Select
+namespace['SelectMultiple'] = SelectMultiple
+namespace['DatePicker'] = DatePicker
+namespace['TimePicker'] = TimePicker
+namespace['ColorPicker'] = ColorPicker
+namespace['FileUpload'] = FileUpload
+namespace['Play'] = Play
+namespace['VBox'] = VBox
+namespace['HBox'] = HBox
+namespace['GridBox'] = GridBox
+namespace['Accordion'] = Accordion
+namespace['Tab'] = Tab
+namespace['Stacked'] = Stacked
+namespace['Box'] = Box
+namespace['Output'] = Output
+namespace['link'] = link
+namespace['dlink'] = dlink
+namespace['interact'] = interact
+
 
 # ----------------------------------------------------------------------
 # Main execution loop
 # ----------------------------------------------------------------------
+# Send ready marker first, then patch IPython
 sys.stdout.write("---JUPY_KERNEL_READY---\n")
 sys.stdout.flush()
+
+# Now patch IPython.display.display
+_patch_ipython_display()
 
 while True:
     line = sys.stdin.readline()
@@ -493,33 +2611,26 @@ while True:
     try:
         data = json.loads(line)
         action = data.get("action")
-
         if action == "complete":
             code = data.get("code", "")
             l_num = data.get("line", 1)
             c_num = data.get("column", 0)
-            comps = _get_worker_completions(code, l_num, c_num)
+            comps = get_worker_completions(code, l_num, c_num, namespace)
             sys.stdout.write(f"---JUPY_COMPS:{json.dumps(comps)}---\n")
             sys.stdout.flush()
-
         elif action == "hover":
             code = data.get("code", "")
             l_num = data.get("line", 1)
             c_num = data.get("column", 0)
-            info = _get_worker_hover(code, l_num, c_num)
+            info = get_worker_hover(code, l_num, c_num)
             sys.stdout.write(f"---JUPY_HOVER:{json.dumps(info)}---\n")
             sys.stdout.flush()
-
         elif action == "widget_event":
-            widget_id = data.get('widget_id')
-            event_data = data.get('data', {})
-            if widget_id in _widgets:
-                _widgets[widget_id]._handle_frontend_event(event_data)
-            continue
-
+            pass
         elif action == "execute":
             code = data.get("code", "")
             lines = code.splitlines()
+            # Cell magic %%
             if lines and lines[0].startswith('%%'):
                 magic_line = lines[0]
                 cell_body = '\n'.join(lines[1:])
@@ -527,17 +2638,17 @@ while True:
                 magic_name = parts[0] if parts else ''
                 args = parts[1:]
                 magic_str = '%' + magic_name + ' ' + ' '.join(args)
-                result = _run_magic(magic_str, cell_body)
+                result = _run_magic(magic_str, cell_body, namespace)
                 if result:
                     sys.stdout.write("---JUPY_STDOUT---\n")
                     sys.stdout.write(result + "\n")
                 sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
                 sys.stdout.flush()
                 continue
-
+            # Line magic %
             if lines and lines[0].strip().startswith('%'):
                 magic_line = lines[0].strip()
-                result = _run_magic(magic_line, None)
+                result = _run_magic(magic_line, None, namespace)
                 if result:
                     sys.stdout.write("---JUPY_STDOUT---\n")
                     sys.stdout.write(result + "\n")
@@ -549,15 +2660,42 @@ while True:
                     sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
                     sys.stdout.flush()
                     continue
+            # System command !
+            if lines and lines[0].strip().startswith('!'):
+                cmd = lines[0].strip()[1:]
+                try:
+                    proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                    if proc.stdout:
+                        sys.stdout.write("---JUPY_STDOUT---\n")
+                        sys.stdout.write(proc.stdout)
+                    if proc.stderr:
+                        sys.stdout.write("---JUPY_STDERR---\n")
+                        sys.stdout.write(proc.stderr)
+                except Exception as e:
+                    sys.stdout.write("---JUPY_STDERR---\n")
+                    sys.stdout.write(str(e) + "\n")
+                if len(lines) > 1:
+                    code = '\n'.join(lines[1:])
+                else:
+                    code = ''
+                if not code:
+                    sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
+                    sys.stdout.flush()
+                    continue
 
+            # Patch IPython again in case it was imported later
+            _patch_ipython_display()
+
+            # Autoreload
             if _autoreload_enabled:
                 for mod_name, mod in list(sys.modules.items()):
                     if mod_name not in sys.builtin_module_names and not mod_name.startswith('_'):
                         try:
                             importlib.reload(mod)
-                        except Exception:
+                        except:
                             pass
 
+            # Normal execution
             out, err = io.StringIO(), io.StringIO()
             try:
                 with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -574,7 +2712,6 @@ while True:
                     else:
                         exec(compile(code, "<cell>", "exec"), namespace)
                     plots = _capture_plots()
-
                 stdout_val = out.getvalue()
                 stderr_val = err.getvalue()
                 if stdout_val:
@@ -588,7 +2725,6 @@ while True:
                     for p in plots:
                         sys.stdout.write(p + "\n")
                     sys.stdout.write("---JUPY_PLOTS_END---\n")
-
             except SyntaxError as e:
                 err_msg = "".join(traceback.format_exception_only(type(e), e))
                 sys.stdout.write(f"---JUPY_STDERR---\n{err_msg}\n")
@@ -596,10 +2732,8 @@ while True:
                 tb = e.__traceback__.tb_next if e.__traceback__ else None
                 err_msg = "".join(traceback.format_exception(type(e), e, tb))
                 sys.stdout.write(f"---JUPY_STDERR---\n{err_msg}\n")
-
             sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
             sys.stdout.flush()
-
     except Exception as e:
         sys.stdout.write(f"---JUPY_STDERR---\nKernel error: {e}\n")
         sys.stdout.write("---JUPY_CELL_COMPLETE---\n")

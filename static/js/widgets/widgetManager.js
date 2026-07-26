@@ -642,8 +642,3 @@ export class WidgetManager {
     // Nothing needed globally
   }
 }
-
-
-export function initWidgetManager(runSocket) {
-  return new WidgetManager(runSocket);
-}

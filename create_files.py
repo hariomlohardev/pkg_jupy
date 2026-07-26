@@ -1,4 +1,25 @@
+#!/usr/bin/env python3
+"""
+Generate the full ipywidgets implementation.
+Run this script once from the project root.
+"""
+import os
 
+# ---- Paths ----
+STATIC_JS_DIR = "static/js"
+WIDGETS_DIR = os.path.join(STATIC_JS_DIR, "widgets")
+OUTPUT_DIR = os.path.join(STATIC_JS_DIR, "output")
+CELL_OUTPUT_PATH = os.path.join(STATIC_JS_DIR, "cells", "cellOutput.js")
+APP_JS_PATH = os.path.join(STATIC_JS_DIR, "app.js")
+WORKER_SCRIPT_PATH = os.path.join("jupy", "core", "kernel", "worker_script.py")
+WIDGETS_CSS_PATH = os.path.join("static", "css", "components", "widgets.css")
+
+# Ensure directories exist
+os.makedirs(WIDGETS_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# ---- 1. widgetManager.js (full) ----
+WIDGET_MANAGER_JS = """
 /**
  * widgets/widgetManager.js
  * Full ipywidgets implementation for Jupy.
@@ -642,8 +663,576 @@ export class WidgetManager {
     // Nothing needed globally
   }
 }
+"""
 
+with open(os.path.join(WIDGETS_DIR, "widgetManager.js"), "w", encoding="utf-8") as f:
+    f.write(WIDGET_MANAGER_JS)
 
-export function initWidgetManager(runSocket) {
-  return new WidgetManager(runSocket);
+# ---- 2. Update cellOutput.js to use the new widget manager ----
+# We'll read the existing file and update the appendWidget function.
+cell_output_path = CELL_OUTPUT_PATH
+if os.path.exists(cell_output_path):
+    with open(cell_output_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    # Replace the appendWidget function with the new version
+    new_append_widget = """
+export function appendWidget(cell, widgetData) {
+  cell.dom.outputEl.hidden = false;
+  const container = document.createElement('div');
+  container.className = 'widget-container';
+  // widgetData should be the widget ID or the full message
+  let widgetId = widgetData;
+  if (typeof widgetData === 'object' && widgetData.widget_id) {
+    widgetId = widgetData.widget_id;
+  }
+  if (window.__jupy_widgetManager) {
+    window.__jupy_widgetManager.renderWidget(widgetId, container);
+  } else {
+    container.textContent = 'Widget manager not available';
+  }
+  cell.dom.outputEl.appendChild(container);
+  cell.outputs.push({ kind: 'widget', data: widgetData });
+  scrollToBottom(cell);
 }
+"""
+    # Find the existing appendWidget and replace it
+    import re
+    pattern = r'export function appendWidget\(cell, widgetData\) \{[^}]*\}'
+    if re.search(pattern, content, re.DOTALL):
+        content = re.sub(pattern, new_append_widget, content, flags=re.DOTALL)
+        with open(cell_output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"Updated: {cell_output_path}")
+    else:
+        print(f"Could not find appendWidget in {cell_output_path}. Please add manually.")
+else:
+    print(f"Warning: {cell_output_path} not found. Skipping.")
+
+# ---- 3. Update app.js to initialize widget manager ----
+# We'll add the initialization if not present.
+app_path = APP_JS_PATH
+if os.path.exists(app_path):
+    with open(app_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    # Check if widget manager is already imported
+    if "import { initWidgetManager } from './widgets/widgetManager.js';" not in content:
+        # Add import after other imports
+        import_line = "import { initWidgetManager } from './widgets/widgetManager.js';"
+        # Find the last import
+        lines = content.splitlines()
+        last_import_idx = -1
+        for i, line in enumerate(lines):
+            if line.startswith("import"):
+                last_import_idx = i
+        if last_import_idx != -1:
+            lines.insert(last_import_idx + 1, import_line)
+        else:
+            lines.insert(0, import_line)
+        content = "\n".join(lines)
+        # Also ensure widget manager is initialized
+        # Find where runSocket is created and add after it
+        if "const widgetManager = initWidgetManager(runSocket);" not in content:
+            # Add after runSocket creation
+            # We'll look for "const runSocket = new ReconnectingSocket" and insert after
+            import re
+            pattern = r'(const runSocket = new ReconnectingSocket\([^;]+;)\s*'
+            replacement = r'\1\n\n  // Initialize widget manager\n  const widgetManager = initWidgetManager(runSocket);\n  window.__jupy_widgetManager = widgetManager;\n  window.__jupy_runSocket = runSocket;\n'
+            content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+        with open(app_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"Updated: {app_path}")
+    else:
+        print(f"{app_path} already has widget manager.")
+else:
+    print(f"Warning: {app_path} not found. Skipping.")
+
+# ---- 4. Update worker_script.py with full widget system ----
+# We'll append the new widget classes and interact to the worker script.
+# Since worker_script.py is large, we'll insert the new code after the existing widget stubs.
+# We'll locate the section where widgets are defined and replace it.
+worker_path = WORKER_SCRIPT_PATH
+if os.path.exists(worker_path):
+    with open(worker_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # We'll replace the existing widget section with the full implementation.
+    # We'll define a new widget block.
+    new_widget_block = """
+# ----------------------------------------------------------------------
+# Full ipywidgets system
+# ----------------------------------------------------------------------
+_widgets = {}
+_widget_counter = 0
+_links = {}
+_link_counter = 0
+
+class WidgetProxy:
+    def __init__(self, widget_type, **kwargs):
+        global _widget_counter
+        self.id = f"widget-{_widget_counter}"
+        _widget_counter += 1
+        self.type = widget_type
+        self.kwargs = kwargs
+        self._callbacks = {}
+        self._children = kwargs.pop('children', [])
+        self._send_widget_event('create', {**kwargs, 'widget_id': self.id, 'type': widget_type})
+        # Register in global dict for link resolution
+        _widgets[self.id] = self
+
+    def _send_widget_event(self, event, data):
+        msg = {'event': event, 'widget_id': self.id, 'type': self.type, 'data': data}
+        sys.stdout.write("---JUPY_WIDGET---\\n")
+        sys.stdout.write(json.dumps(msg) + "\\n")
+        sys.stdout.flush()
+
+    def set_state(self, **kwargs):
+        self.kwargs.update(kwargs)
+        self._send_widget_event('update', kwargs)
+
+    def observe(self, callback, names='value'):
+        if isinstance(names, str):
+            names = [names]
+        for name in names:
+            if name not in self._callbacks:
+                self._callbacks[name] = []
+            self._callbacks[name].append(callback)
+
+    def on_click(self, callback):
+        self.observe(callback, 'click')
+
+    def _handle_frontend_event(self, event_data):
+        # Called from frontend via widget_event action
+        for attr, value in event_data.items():
+            if attr == 'value' or attr == 'click':
+                self.kwargs[attr] = value
+                if attr in self._callbacks:
+                    for cb in self._callbacks[attr]:
+                        cb(value)
+                # If this is a link source, propagate
+                for link in _links.values():
+                    if link.source_id == self.id:
+                        link.propagate(value)
+        # Also update other widgets if linked via dlink
+
+class Link:
+    def __init__(self, source, target, transform=None, bidirectional=False):
+        global _link_counter
+        self.id = f"link-{_link_counter}"
+        _link_counter += 1
+        self.source_id = source.id if hasattr(source, 'id') else source
+        self.target_id = target.id if hasattr(target, 'id') else target
+        self.transform = transform
+        self.bidirectional = bidirectional
+        _links[self.id] = self
+        # Send link creation to frontend
+        msg = {
+            'event': 'link' if not bidirectional else 'dlink',
+            'widget_id': self.id,
+            'data': {
+                'source': self.source_id,
+                'target': self.target_id,
+                'transform': transform
+            }
+        }
+        sys.stdout.write("---JUPY_WIDGET---\\n")
+        sys.stdout.write(json.dumps(msg) + "\\n")
+        sys.stdout.flush()
+
+    def propagate(self, value):
+        if self.transform:
+            value = self.transform(value)
+        target = _widgets.get(self.target_id)
+        if target:
+            target.set_state(value=value)
+
+def link(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=False)
+
+def dlink(source, target, transform=None):
+    return Link(source, target, transform, bidirectional=True)
+
+# ---- Widget classes ----
+def IntSlider(**kwargs):
+    return WidgetProxy('IntSlider', **kwargs)
+
+def FloatSlider(**kwargs):
+    return WidgetProxy('FloatSlider', **kwargs)
+
+def IntText(**kwargs):
+    return WidgetProxy('IntText', **kwargs)
+
+def FloatText(**kwargs):
+    return WidgetProxy('FloatText', **kwargs)
+
+def Checkbox(**kwargs):
+    return WidgetProxy('Checkbox', **kwargs)
+
+def RadioButtons(**kwargs):
+    return WidgetProxy('RadioButtons', **kwargs)
+
+def ToggleButton(**kwargs):
+    return WidgetProxy('ToggleButton', **kwargs)
+
+def ToggleButtons(**kwargs):
+    return WidgetProxy('ToggleButtons', **kwargs)
+
+def Dropdown(**kwargs):
+    return WidgetProxy('Dropdown', **kwargs)
+
+def Select(**kwargs):
+    return WidgetProxy('Select', **kwargs)
+
+def SelectMultiple(**kwargs):
+    return WidgetProxy('SelectMultiple', **kwargs)
+
+def DatePicker(**kwargs):
+    return WidgetProxy('DatePicker', **kwargs)
+
+def TimePicker(**kwargs):
+    return WidgetProxy('TimePicker', **kwargs)
+
+def ColorPicker(**kwargs):
+    return WidgetProxy('ColorPicker', **kwargs)
+
+def FileUpload(**kwargs):
+    return WidgetProxy('FileUpload', **kwargs)
+
+def Play(**kwargs):
+    return WidgetProxy('Play', **kwargs)
+
+def VBox(**kwargs):
+    return WidgetProxy('VBox', **kwargs)
+
+def HBox(**kwargs):
+    return WidgetProxy('HBox', **kwargs)
+
+def GridBox(**kwargs):
+    return WidgetProxy('GridBox', **kwargs)
+
+def Accordion(**kwargs):
+    return WidgetProxy('Accordion', **kwargs)
+
+def Tab(**kwargs):
+    return WidgetProxy('Tab', **kwargs)
+
+def Stacked(**kwargs):
+    return WidgetProxy('Stacked', **kwargs)
+
+def Box(**kwargs):
+    return WidgetProxy('Box', **kwargs)
+
+def Output(**kwargs):
+    return WidgetProxy('Output', **kwargs)
+
+# ---- @interact decorator ----
+def interact(func=None, **options):
+    if func is None:
+        def decorator(f):
+            return interact(f, **options)
+        return decorator
+    else:
+        # Create widgets from options
+        widgets = {}
+        for name, value in options.items():
+            if isinstance(value, (int, float)):
+                widgets[name] = IntSlider(value=value, min=0, max=10*value, description=name)
+            elif isinstance(value, list):
+                widgets[name] = Dropdown(options=value, value=value[0], description=name)
+            elif isinstance(value, bool):
+                widgets[name] = Checkbox(value=value, description=name)
+            else:
+                widgets[name] = IntText(value=value, description=name)
+        # Display widgets in a VBox
+        if widgets:
+            display(VBox(children=list(widgets.values())))
+        # Define wrapper function
+        def wrapper(*args, **kwargs):
+            # Forward widget values to the function
+            args = tuple(widgets.values())
+            kwargs = {name: w.kwargs.get('value') for name, w in widgets.items()}
+            return func(**kwargs)
+        # Register callbacks to update wrapper
+        for w in widgets.values():
+            w.observe(lambda _: wrapper(), 'value')
+        return wrapper
+
+namespace['IntSlider'] = IntSlider
+namespace['FloatSlider'] = FloatSlider
+namespace['IntText'] = IntText
+namespace['FloatText'] = FloatText
+namespace['Checkbox'] = Checkbox
+namespace['RadioButtons'] = RadioButtons
+namespace['ToggleButton'] = ToggleButton
+namespace['ToggleButtons'] = ToggleButtons
+namespace['Dropdown'] = Dropdown
+namespace['Select'] = Select
+namespace['SelectMultiple'] = SelectMultiple
+namespace['DatePicker'] = DatePicker
+namespace['TimePicker'] = TimePicker
+namespace['ColorPicker'] = ColorPicker
+namespace['FileUpload'] = FileUpload
+namespace['Play'] = Play
+namespace['VBox'] = VBox
+namespace['HBox'] = HBox
+namespace['GridBox'] = GridBox
+namespace['Accordion'] = Accordion
+namespace['Tab'] = Tab
+namespace['Stacked'] = Stacked
+namespace['Box'] = Box
+namespace['Output'] = Output
+namespace['link'] = link
+namespace['dlink'] = dlink
+namespace['interact'] = interact
+"""
+    # We'll replace the existing widget block.
+    # Find the old widget block and replace it.
+    # We'll look for the line "# ----------------------------------------------------------------------" and replace until the next "# ----------------------------------------------------------------------"
+    import re
+    pattern = r'(# ----------------------------------------------------------------------\n# Widget system.*?)\n# ----------------------------------------------------------------------'
+    # The old block might be different. Let's do a simpler approach: find the old start and end.
+    # We'll just append the new block after the existing magics, and comment out the old block.
+    # This is safer.
+    # Locate the line before the old widget block.
+    marker = "# ----------------------------------------------------------------------\n# Widget system (simplified ipywidgets)"
+    if marker in content:
+        # Replace from marker to the next section
+        start = content.find(marker)
+        end = content.find("# ----------------------------------------------------------------------", start + 10)
+        if end != -1:
+            # Remove the old block
+            content = content[:start] + new_widget_block + content[end:]
+        else:
+            # If no end marker, just replace until end of file? Not safe.
+            # We'll append after the marker
+            pass
+    else:
+        # If marker not found, append at the end before the main loop.
+        # Find the main loop start
+        main_loop_start = content.find("# ----------------------------------------------------------------------\n# Main execution loop")
+        if main_loop_start != -1:
+            content = content[:main_loop_start] + new_widget_block + "\n\n" + content[main_loop_start:]
+        else:
+            # Fallback: append at the very end before the closing of the string.
+            content = content.rstrip() + "\n\n" + new_widget_block
+
+    with open(worker_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"Updated: {worker_path}")
+else:
+    print(f"Warning: {worker_path} not found. Skipping.")
+
+# ---- 5. Widgets CSS (add styles) ----
+# We'll add the styles to the existing widgets.css or create it.
+widgets_css = """
+/* widgets.css */
+.widget-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+.widget-slider .widget-label {
+  font-weight: 700;
+  min-width: 80px;
+}
+.widget-slider input[type="range"] {
+  flex: 1;
+}
+.widget-slider .widget-value {
+  min-width: 30px;
+  font-family: var(--font-mono);
+}
+
+.widget-text, .widget-dropdown, .widget-select, .widget-datepicker, .widget-timepicker, .widget-colorpicker, .widget-fileupload {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.widget-text .widget-label, .widget-dropdown .widget-label, .widget-select .widget-label,
+.widget-datepicker .widget-label, .widget-timepicker .widget-label, .widget-colorpicker .widget-label,
+.widget-fileupload .widget-label {
+  font-weight: 700;
+  min-width: 80px;
+}
+.widget-text input, .widget-datepicker input, .widget-timepicker input, .widget-colorpicker input,
+.widget-fileupload input {
+  border: var(--border-thick);
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.widget-fileupload input[type="file"] {
+  border: none;
+  padding: 0;
+}
+.widget-dropdown select, .widget-select select {
+  border: var(--border-thick);
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.widget-checkbox label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+.widget-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-primary);
+}
+
+.widget-radio-group {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.widget-radio-option {
+  border: var(--border-thick);
+  padding: 2px 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 700;
+  cursor: pointer;
+}
+.widget-radio-option.active {
+  background: var(--color-secondary);
+  color: #111827;
+}
+.widget-radio-option:hover {
+  background: var(--color-primary);
+  color: #FFFFFF;
+}
+
+.widget-toggle-button {
+  border: var(--border-thick);
+  padding: 4px 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 700;
+  cursor: pointer;
+}
+.widget-toggle-button.active {
+  background: var(--color-secondary);
+  color: #111827;
+}
+
+.widget-play {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.widget-play-button {
+  border: var(--border-thick);
+  padding: 4px 12px;
+  background: var(--color-secondary);
+  color: #111827;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+.widget-play-button:hover {
+  background: var(--color-primary);
+  color: #FFFFFF;
+}
+
+.widget-layout {
+  padding: 4px 0;
+}
+.widget-flex {
+  display: flex;
+}
+.widget-grid {
+  display: grid;
+}
+.widget-block {
+  display: block;
+}
+
+.widget-accordion .accordion-panel {
+  border: var(--border-thick);
+  margin-bottom: 4px;
+}
+.widget-accordion .accordion-header {
+  background: var(--color-secondary);
+  padding: 4px 10px;
+  font-weight: 700;
+  cursor: pointer;
+  color: #111827;
+}
+.widget-accordion .accordion-header:hover {
+  background: var(--color-primary);
+  color: #FFFFFF;
+}
+.widget-accordion .accordion-content {
+  padding: 6px 10px;
+}
+
+.widget-tabs .tab-headers {
+  display: flex;
+  gap: 2px;
+}
+.widget-tabs .tab-header {
+  border: var(--border-thick);
+  padding: 4px 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 700;
+  cursor: pointer;
+}
+.widget-tabs .tab-header.active {
+  background: var(--color-secondary);
+  color: #111827;
+}
+.widget-tabs .tab-content {
+  border: var(--border-thick);
+  padding: 6px;
+  border-top: none;
+}
+
+.widget-stacked .stack-item {
+  padding: 6px;
+  border: var(--border-thick);
+}
+
+.widget-output {
+  border: var(--border-thick);
+  background: var(--color-bg-well);
+  padding: 4px;
+}
+.widget-output .widget-output-content {
+  max-height: 200px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--color-text);
+}
+.widget-container {
+  margin: 4px 0;
+}
+"""
+os.makedirs(os.path.dirname(WIDGETS_CSS_PATH), exist_ok=True)
+with open(WIDGETS_CSS_PATH, "w", encoding="utf-8") as f:
+    f.write(widgets_css)
+
+print("\n✅ All files created/updated.")
+print("Next steps:")
+print("1. Restart the server.")
+print("2. Test widgets with:\n")
+print("```python")
+print("from IPython.display import display")
+print("slider = IntSlider(value=42, min=0, max=100)")
+print("display(slider)")
+print("```")
+print("3. Test interact:")
+print("```python")
+print("@interact(x=10, y=20, text='hello')")
+print("def f(x, y, text):")
+print("    print(x, y, text)")
+print("```")

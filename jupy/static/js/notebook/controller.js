@@ -77,7 +77,13 @@ export function createNotebookController({
   // ===== Operations (needs selection.selectCell) =====
   const operations = createOperations(state, buildCell, reorderDom, selection.selectCell, showToast, runSocket);
 
-  // ===== Execution (needs operations and selection) =====
+  // ===== Status (must be defined before execution) =====
+  const status = createStatus(state);
+  function setStatus(newStatus) {
+    status.setStatus(newStatus);
+  }
+
+  // ===== Execution (needs operations, selection, and setStatus) =====
   const execution = createExecution(state, runSocket, showToast, setStatus, operations, selection);
 
   // ===== Clipboard (needs operations and selection) =====
@@ -89,14 +95,8 @@ export function createNotebookController({
   // ===== Other modules =====
   const dnd = createDnD(container, state, operations, selection);
   const findReplace = createFindReplace(state);
-  const status = createStatus(state);
   const presentation = createPresentation();
   const lineNumbers = createLineNumbers(state);
-
-  // ===== Set status =====
-  function setStatus(newStatus) {
-    status.setStatus(newStatus);
-  }
 
   // ===== Public API =====
   return {

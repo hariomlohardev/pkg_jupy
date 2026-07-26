@@ -168,7 +168,8 @@ def ensure_env(env_dir, on_progress=None):
             ) from e
 
     if not os.path.exists(env_dir):
-        if on_progress: on_progress(f"Creating environment at {env_dir}...")
+        if on_progress:
+            on_progress(f"Creating environment at {env_dir}...")
         venv.create(env_dir, with_pip=True)
 
     python, binpath = _interpreter_paths(env_dir)
@@ -184,7 +185,8 @@ def ensure_env(env_dir, on_progress=None):
     try:
         subprocess.run([python, "-c", "import jedi"], check=True, capture_output=True)
     except Exception:
-        if on_progress: on_progress("Installing completion engine...")
+        if on_progress:
+            on_progress("Installing completion engine...")
         subprocess.run([python, "-m", "pip", "install", "-q"] + JUPY_ENV_DEPENDENCIES, capture_output=True)
 
     return python, binpath

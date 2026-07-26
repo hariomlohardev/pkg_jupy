@@ -12,7 +12,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css" />
 
-<!-- MathJax, marked, DOMPurify for markdown & rich outputs -->
+<!-- MathJax, marked, DOMPurify -->
 <script>
   window.MathJax = {
     tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] },
@@ -24,6 +24,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.4/purify.min.js"></script>
 
 <link rel="stylesheet" href="css/main.css" />
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<script src="https://cdn.bokeh.org/bokeh/release/bokeh-3.3.4.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
 </head>
 <body>
 
@@ -92,29 +95,61 @@
   <div class="spacer"></div>
 
   <div class="topbar-actions">
-    <span id="selection-info" style="font-family:var(--font-mono); font-size:0.7rem; min-width:60px;"></span>
-    <button class="btn btn-secondary" id="btn-undo" title="Undo (Ctrl+Z)">↩</button>
-    <button class="btn btn-secondary" id="btn-redo" title="Redo (Ctrl+Y)">↪</button>
-    <button class="btn btn-secondary" id="btn-merge" title="Merge selected cells (Ctrl+Shift+M)">⊞</button>
-    <button class="btn btn-secondary" id="btn-split" title="Split cell (Ctrl+Shift+-)">⊟</button>
-    <button class="btn btn-secondary" id="btn-find" title="Find (Ctrl+F)">🔍</button>
-    <button class="btn btn-secondary" id="btn-line-numbers" title="Toggle line numbers (Ctrl+Shift+L)">#</button>
-    <button class="btn btn-secondary" id="btn-presentation" title="Presentation mode (Ctrl+Shift+P)">⛶</button>
-
-    <!-- New Export Buttons -->
-    <div style="display:inline-flex; gap:2px; border-left:2px solid var(--color-border); padding-left:6px;">
-      <button class="btn btn-secondary" id="btn-export-html" title="Export as HTML">🌐 HTML</button>
-      <button class="btn btn-secondary" id="btn-export-py" title="Export as Python script">🐍 PY</button>
-      <button class="btn btn-secondary" id="btn-export-md" title="Export as Markdown">📝 MD</button>
-      <button class="btn btn-secondary" id="btn-export-pdf" title="Export as PDF (print)">📄 PDF</button>
+    <!-- Run Dropdown -->
+    <div class="runtime-menu" id="run-menu">
+      <button class="runtime-menu-trigger" id="run-menu-trigger" aria-haspopup="true" aria-expanded="false">
+        RUN
+        <svg class="runtime-menu-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="runtime-menu-dropdown" id="run-menu-dropdown" role="menu">
+        <button class="runtime-menu-item" id="run-all" role="menuitem">▶ Run All Cells</button>
+        <button class="runtime-menu-item" id="run-above" role="menuitem">⏫ Run Above Selected</button>
+        <button class="runtime-menu-item" id="run-below" role="menuitem">⏬ Run Below Selected</button>
+        <button class="runtime-menu-item" id="run-selected" role="menuitem">☑ Run Selected Cells</button>
+        <div class="runtime-menu-divider"></div>
+        <button class="runtime-menu-item" id="run-cell-keep-going" role="menuitem">⏩ Run Cell & Keep Going</button>
+      </div>
     </div>
 
+    <!-- Edit Dropdown -->
+    <div class="runtime-menu" id="edit-menu">
+      <button class="runtime-menu-trigger" id="edit-menu-trigger" aria-haspopup="true" aria-expanded="false">
+        EDIT
+        <svg class="runtime-menu-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="runtime-menu-dropdown" id="edit-menu-dropdown" role="menu">
+        <button class="runtime-menu-item" id="btn-undo" role="menuitem">↩ Undo (Ctrl+Z)</button>
+        <button class="runtime-menu-item" id="btn-redo" role="menuitem">↪ Redo (Ctrl+Y)</button>
+        <div class="runtime-menu-divider"></div>
+        <button class="runtime-menu-item" id="btn-merge" role="menuitem">⊞ Merge Selected Cells</button>
+        <button class="runtime-menu-item" id="btn-split" role="menuitem">⊟ Split Cell</button>
+        <div class="runtime-menu-divider"></div>
+        <button class="runtime-menu-item" id="btn-find" role="menuitem">🔍 Find/Replace (Ctrl+F)</button>
+        <button class="runtime-menu-item" id="btn-line-numbers" role="menuitem"># Toggle Line Numbers</button>
+      </div>
+    </div>
+
+    <!-- Export Dropdown -->
+    <div class="runtime-menu" id="export-menu">
+      <button class="runtime-menu-trigger" id="export-menu-trigger" aria-haspopup="true" aria-expanded="false">
+        EXPORT
+        <svg class="runtime-menu-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="runtime-menu-dropdown" id="export-menu-dropdown" role="menu">
+        <button class="runtime-menu-item" id="btn-export-html" role="menuitem">🌐 HTML</button>
+        <button class="runtime-menu-item" id="btn-export-py" role="menuitem">🐍 Python Script</button>
+        <button class="runtime-menu-item" id="btn-export-md" role="menuitem">📝 Markdown</button>
+        <button class="runtime-menu-item" id="btn-export-pdf" role="menuitem">📄 PDF (Print)</button>
+      </div>
+    </div>
+
+    <!-- Other buttons -->
     <button class="btn btn-warning" id="btn-terminal-toggle">📟 TERMINAL</button>
     <button class="btn btn-secondary" id="btn-theme-toggle" title="Toggle Light/Dark Theme">☀ DARK</button>
+    <button class="btn btn-secondary" id="btn-presentation" title="Presentation mode (Ctrl+Shift+P)">⛶</button>
     <input type="file" id="file-input" accept=".ipynb" hidden />
     <button class="btn btn-secondary" id="btn-open">OPEN</button>
     <button class="btn btn-secondary" id="btn-save">SAVE</button>
-    <button class="btn btn-primary" id="btn-run-all">RUN ALL</button>
   </div>
 </header>
 

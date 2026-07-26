@@ -129,3 +129,29 @@
   margin: 5px 4px;
   flex-shrink: 0;
 }
+
+
+/* Ensure dropdowns work for any .runtime-menu */
+.runtime-menu .runtime-menu-dropdown {
+  display: none;
+  flex-direction: column;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  background: var(--color-surface);
+  border: var(--border-thick);
+  border-radius: var(--rounded-sm);
+  box-shadow: var(--shadow-brutal-lg);
+  padding: 5px;
+  z-index: 300;
+}
+.runtime-menu.open .runtime-menu-dropdown {
+  display: flex;
+}
+.runtime-menu-divider {
+  height: 2px;
+  background: var(--color-border);
+  opacity: 0.15;
+  margin: 5px 4px;
+}

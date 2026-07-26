@@ -1,12 +1,19 @@
 import os
 import re
 import subprocess
-from jupy.core.kernel import kernel
 
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 def clean_text(text):
     return ANSI_ESCAPE.sub('', text)
+
+
+def _get_kernel():
+    # Imported lazily on purpose: importing this module (which handlers.py
+    # does at startup) must NOT force the kernel subprocess to spawn before
+    # the HTTP server is even listening.
+    from jupy.core.kernel import kernel
+    return kernel
 
 
 class TerminalSession:
@@ -17,6 +24,7 @@ class TerminalSession:
         self.cwd = os.getcwd()
 
     def get_env(self):
+        kernel = _get_kernel()
         env = os.environ.copy()
         env["VIRTUAL_ENV"] = kernel.env_info["path"]
         env["PATH"] = kernel.env_info["bin"] + os.path.pathsep + env.get("PATH", "")
@@ -25,6 +33,7 @@ class TerminalSession:
         return env
 
     def get_prompt(self):
+        kernel = _get_kernel()
         return f"({kernel.env_info['name']}) ❯"
 
     def execute_cmd(self, cmd_str):
