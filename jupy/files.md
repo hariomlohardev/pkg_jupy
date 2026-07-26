@@ -1,8 +1,8 @@
 ---
 title: Folder Code Compilation
-date: 2026-07-26 21:57:10
+date: 2026-07-26 22:36:31
 root_folder: "jupy"
-total_compiled_files: 92
+total_compiled_files: 89
 ---
 
 # File: cli.py
@@ -276,344 +276,6 @@ if __name__ == "__main__":
     parser.add_argument('--output', '-o', help='Output file (default: overwrite input)', default=None)
     args = parser.parse_args()
     run_notebook(args.notebook, args.output)
-```
-
-
----
-
-# File: server.py
-
-```py
-import ast
-import base64
-import hashlib
-import io
-import json
-import os
-import re
-import socketserver
-import struct
-import subprocess
-import sys
-import threading
-import time
-import traceback
-import venv
-from http.server import SimpleHTTPRequestHandler
-
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-VENV_DIR = os.path.abspath(".jupy_env")
-
-def ensure_virtualenv():
-    """Ensure isolated .jupy_env virtual environment exists."""
-    if not os.path.exists(VENV_DIR):
-        print(f"[Jupy] Creating isolated virtual environment at {VENV_DIR}...")
-        venv.create(VENV_DIR, with_pip=True)
-        print("[Jupy] Virtual environment ready.")
-
-    if sys.platform == "win32":
-        venv_python = os.path.join(VENV_DIR, "Scripts", "python.exe")
-        venv_bin = os.path.join(VENV_DIR, "Scripts")
-    else:
-        venv_python = os.path.join(VENV_DIR, "bin", "python")
-        venv_bin = os.path.join(VENV_DIR, "bin")
-
-    return venv_python, venv_bin
-
-VENV_PYTHON, VENV_BIN = ensure_virtualenv()
-
-# WebSocket Helpers
-WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-
-def make_ws_accept(key):
-    sha1 = hashlib.sha1((key + WS_GUID).encode('utf-8')).digest()
-    return base64.b64encode(sha1).decode('utf-8')
-
-def parse_ws_frame(rfile):
-    try:
-        head1_b = rfile.read(1)
-        if not head1_b: return None, None
-        head2_b = rfile.read(1)
-        if not head2_b: return None, None
-
-        head1, head2 = head1_b[0], head2_b[0]
-        opcode = head1 & 0x0F
-        if opcode == 0x8:  # Connection close
-            return None, 0x8
-
-        has_mask = bool(head2 & 0x80)
-        length = head2 & 0x7F
-
-        if length == 126:
-            length = struct.unpack(">H", rfile.read(2))[0]
-        elif length == 127:
-            length = struct.unpack(">Q", rfile.read(8))[0]
-
-        masks = rfile.read(4) if has_mask else None
-        data = bytearray(rfile.read(length))
-        if has_mask:
-            for i in range(len(data)):
-                data[i] ^= masks[i % 4]
-
-        return data.decode('utf-8', errors='ignore'), opcode
-    except Exception:
-        return None, 0x8
-
-def make_ws_frame(message):
-    data = message.encode('utf-8')
-    length = len(data)
-    if length <= 125:
-        header = struct.pack("BB", 0x81, length)
-    elif length <= 65535:
-        header = struct.pack(">BBH", 0x81, 126, length)
-    else:
-        header = struct.pack(">BBQ", 0x81, 127, length)
-    return header + data
-
-class KernelManager:
-    """Handles cell execution with safe real-time process interrupt support."""
-    def __init__(self):
-        self.current_proc = None
-        self.exec_count = 0
-
-    def interrupt(self):
-        proc = self.current_proc
-        if proc and proc.poll() is None:
-            try:
-                proc.terminate()
-                time.sleep(0.1)
-                if proc.poll() is None:
-                    proc.kill()
-            except Exception:
-                pass
-            return True
-        return False
-
-    def execute(self, code, ws_send_fn):
-        self.exec_count += 1
-        
-        lines = code.splitlines()
-        pip_cmds = []
-        py_lines = []
-
-        for line in lines:
-            stripped = line.strip()
-            if re.match(r'^[!%]?\s*pip\s+install\s+', stripped):
-                clean_cmd = re.sub(r'^[!%]?\s*pip\s+install\s+', '', stripped)
-                pip_cmds.append(clean_cmd)
-            else:
-                py_lines.append(line)
-
-        # Run pip installs
-        for cmd in pip_cmds:
-            ws_send_fn({"type": "stdout", "text": f"Installing {cmd} in .jupy_env...\n"})
-            p = subprocess.run([VENV_PYTHON, "-m", "pip", "install"] + cmd.split(), capture_output=True, text=True)
-            if p.stdout: ws_send_fn({"type": "stdout", "text": p.stdout})
-            if p.stderr: ws_send_fn({"type": "stderr", "text": p.stderr})
-
-        clean_code = "\n".join(py_lines)
-        if not clean_code.strip():
-            ws_send_fn({"type": "complete", "exec_count": self.exec_count})
-            return
-
-        runner_script = f"""
-import sys, io, ast, base64, json, traceback
-from contextlib import redirect_stdout, redirect_stderr
-
-out, err = io.StringIO(), io.StringIO()
-result_repr, error_tb = None, None
-plots = []
-
-def capture_plots():
-    plot_htmls = []
-    if "matplotlib.pyplot" in sys.modules:
-        import matplotlib.pyplot as plt
-        for i in plt.get_fignums():
-            try:
-                fig = plt.figure(i)
-                buf = io.BytesIO()
-                fig.savefig(buf, format="png", bbox_inches="tight", dpi=110)
-                buf.seek(0)
-                b64 = base64.b64encode(buf.read()).decode("ascii")
-                plot_htmls.append(f'<img class="notebook-plot" src="data:image/png;base64,{{b64}}" alt="Plot" />')
-            except Exception: pass
-        try: plt.close("all")
-        except Exception: pass
-    return plot_htmls
-
-try:
-    with redirect_stdout(out), redirect_stderr(err):
-        if "matplotlib" in sys.modules:
-            import matplotlib
-            try: matplotlib.use("Agg", force=True)
-            except Exception: pass
-        
-        tree = ast.parse({repr(clean_code)}, mode="exec")
-        if tree.body and isinstance(tree.body[-1], ast.Expr):
-            last = tree.body.pop()
-            if tree.body:
-                exec(compile(tree, "<cell>", "exec"), globals())
-            expr = ast.Expression(last.value)
-            ast.copy_location(expr, last.value)
-            value = eval(compile(expr, "<cell>", "eval"), globals())
-            if value is not None:
-                result_repr = repr(value)
-        else:
-            exec(compile({repr(clean_code)}, "<cell>", "exec"), globals())
-        plots = capture_plots()
-except SyntaxError as e:
-    error_tb = "".join(traceback.format_exception_only(type(e), e))
-except Exception as e:
-    tb = e.__traceback__.tb_next if e.__traceback__ else None
-    error_tb = "".join(traceback.format_exception(type(e), e, tb))
-
-print("---JUPY_JSON_START---")
-print(json.dumps({{
-    "stdout": out.getvalue(),
-    "stderr": err.getvalue(),
-    "result": result_repr,
-    "error": error_tb,
-    "plots": plots
-}}))
-"""
-        proc = subprocess.Popen([VENV_PYTHON, "-c", runner_script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        self.current_proc = proc
-        stdout, stderr = proc.communicate()
-
-        if proc.returncode != 0 and not stdout:
-            ws_send_fn({"type": "stderr", "text": "\n⏹ Execution interrupted by user.\n"})
-        else:
-            if "---JUPY_JSON_START---" in stdout:
-                parts = stdout.split("---JUPY_JSON_START---")
-                pre = parts[0]
-                if pre: ws_send_fn({"type": "stdout", "text": pre})
-                try:
-                    res = json.loads(parts[1].strip())
-                    if res.get("stdout"): ws_send_fn({"type": "stdout", "text": res["stdout"]})
-                    if res.get("stderr"): ws_send_fn({"type": "stderr", "text": res["stderr"]})
-                    if res.get("result"): ws_send_fn({"type": "stdout", "text": res["result"]})
-                    if res.get("error"): ws_send_fn({"type": "stderr", "text": res["error"]})
-                    if res.get("plots"):
-                        for p in res["plots"]: ws_send_fn({"type": "plot", "html": p})
-                except Exception:
-                    pass
-
-        self.current_proc = None
-        ws_send_fn({"type": "complete", "exec_count": self.exec_count})
-
-kernel = KernelManager()
-
-class JupyHTTPHandler(SimpleHTTPRequestHandler):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=STATIC_DIR, **kwargs)
-
-    def do_GET(self):
-        if self.headers.get("Upgrade", "").lower() == "websocket":
-            ws_key = self.headers.get("Sec-WebSocket-Key")
-            accept_key = make_ws_accept(ws_key)
-
-            self.send_response(101)
-            self.send_header("Upgrade", "websocket")
-            self.send_header("Connection", "Upgrade")
-            self.send_header("Sec-WebSocket-Accept", accept_key)
-            self.end_headers()
-
-            if self.path == "/ws/run":
-                self.handle_run_ws()
-            elif self.path == "/ws/terminal":
-                self.handle_terminal_ws()
-            return
-
-        if self.path == "/api/status":
-            self._send_json({"status": "ready", "exec_count": kernel.exec_count, "venv": VENV_DIR})
-        else:
-            super().do_GET()
-
-    def handle_run_ws(self):
-        def ws_send(data_dict):
-            try:
-                frame = make_ws_frame(json.dumps(data_dict))
-                self.wfile.write(frame)
-                self.wfile.flush()
-            except Exception:
-                pass
-
-        while True:
-            msg, opcode = parse_ws_frame(self.rfile)
-            if opcode == 0x8 or msg is None:
-                break
-            try:
-                req = json.loads(msg)
-                action = req.get("action")
-                if action == "run":
-                    code = req.get("code", "")
-                    threading.Thread(target=kernel.execute, args=(code, ws_send), daemon=True).start()
-                elif action == "interrupt":
-                    kernel.interrupt()
-            except Exception:
-                pass
-
-    def handle_terminal_ws(self):
-        """Native Shell Handler."""
-        env = os.environ.copy()
-        env["VIRTUAL_ENV"] = VENV_DIR
-        env["PATH"] = VENV_BIN + os.path.pathsep + env.get("PATH", "")
-
-        shell = ["cmd.exe", "/K"] if sys.platform == "win32" else [env.get("SHELL", "/bin/bash"), "-i"]
-
-        proc = subprocess.Popen(
-            shell,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=env,
-            cwd=os.getcwd()
-        )
-
-        def stream_stdout():
-            while proc.poll() is None:
-                try:
-                    chunk = proc.stdout.read(1)
-                    if chunk:
-                        text = chunk.decode("utf-8", errors="replace")
-                        frame = make_ws_frame(json.dumps({"type": "output", "data": text}))
-                        self.wfile.write(frame)
-                        self.wfile.flush()
-                    else:
-                        break
-                except Exception:
-                    break
-
-        threading.Thread(target=stream_stdout, daemon=True).start()
-
-        while True:
-            msg, opcode = parse_ws_frame(self.rfile)
-            if opcode == 0x8 or msg is None:
-                try: proc.terminate()
-                except Exception: pass
-                break
-            try:
-                data = json.loads(msg)
-                if data.get("type") == "input":
-                    inp = data.get("data", "")
-                    proc.stdin.write(inp.encode("utf-8"))
-                    proc.stdin.flush()
-            except Exception:
-                pass
-
-    def _send_json(self, data):
-        body = json.dumps(data).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-def start_server(port=8888):
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("", port), JupyHTTPHandler) as httpd:
-        httpd.serve_forever()
-
 ```
 
 
@@ -1942,7 +1604,6 @@ class KernelManager:
         with self.lock:
             if self.proc is None or self.proc.poll() is not None:
                 self._cleanup_worker_script()
-
                 fd, script_path = tempfile.mkstemp(suffix='.py', text=True)
                 self.worker_script_path = script_path
                 try:
@@ -1951,10 +1612,8 @@ class KernelManager:
                 except Exception as e:
                     os.close(fd)
                     raise RuntimeError(f"Failed to write worker script: {e}")
-
                 env = os.environ.copy()
                 env["PYTHONUNBUFFERED"] = "1"
-
                 try:
                     proc = subprocess.Popen(
                         [self.python, script_path],
@@ -1969,28 +1628,23 @@ class KernelManager:
                 except Exception as e:
                     self._cleanup_worker_script()
                     raise RuntimeError(f"Couldn't launch Python: {e}") from e
-
-                # Read stderr in background
                 def read_stderr():
                     for line in proc.stderr:
                         print(f"[Kernel stderr] {line.rstrip()}", flush=True)
                 stderr_thread = threading.Thread(target=read_stderr, daemon=True)
                 stderr_thread.start()
-
                 q = queue.Queue()
                 def reader():
                     line = proc.stdout.readline()
                     q.put(line)
                 t = threading.Thread(target=reader, daemon=True)
                 t.start()
-
                 try:
                     line = q.get(timeout=20)
                 except queue.Empty:
                     _kill_process_tree(proc)
                     self._cleanup_worker_script()
                     raise RuntimeError("Kernel didn't respond within 20s on startup.")
-
                 ready = "---JUPY_KERNEL_READY---" in line
                 if not ready:
                     try:
@@ -2004,7 +1658,6 @@ class KernelManager:
                     detail = stderr_output.strip() or "exited immediately"
                     self._cleanup_worker_script()
                     raise RuntimeError(f"Couldn't start kernel: {detail}")
-
                 self.proc = proc
 
     def get_completions(self, code, line, col):
@@ -2037,7 +1690,7 @@ class KernelManager:
             return None
         try:
             proc = self.proc
-            if proc is None or proc.poll() is not None:
+            if proc is None or proc.poll() is None:
                 return None
             req = json.dumps({"action": "hover", "code": code, "line": line, "column": col}) + "\n"
             try: proc.stdin.write(req); proc.stdin.flush()
@@ -2065,7 +1718,6 @@ class KernelManager:
         return False
 
     def interrupt(self):
-        # Send interrupt signal to the worker instead of killing it
         with self.comm_lock:
             if self.proc and self.proc.poll() is None:
                 try:
@@ -2073,7 +1725,6 @@ class KernelManager:
                     self.proc.stdin.flush()
                 except:
                     pass
-        # Also fallback to process kill if that doesn't work
         return self.force_interrupt()
 
     def restart(self):
@@ -2093,7 +1744,6 @@ class KernelManager:
         return self.env_info
 
     def send_to_worker(self, data):
-        """Send arbitrary JSON data to the persistent worker (e.g., widget events)."""
         with self.comm_lock:
             if self.proc and self.proc.poll() is None:
                 try:
@@ -2107,19 +1757,21 @@ class KernelManager:
 
     def execute(self, code, ws_send_fn, timeout=None, language='python'):
         if language != 'python':
-            self._execute_other_language(code, ws_send_fn, language, timeout)
+            self.exec_count += 1
+            # FIX #2: Pass exec_count
+            self._execute_other_language(code, ws_send_fn, language, timeout, self.exec_count)
             return
-
+            
         self.exec_count += 1
         exec_count = self.exec_count
-
-        # Send code to persistent worker using the "execute" action
+        
         with self.comm_lock:
             proc = self.proc
             if proc is None or proc.poll() is not None:
                 ws_send_fn({"type": "stderr", "text": "Kernel not running. Restart required."})
                 ws_send_fn({"type": "complete", "exec_count": exec_count})
                 return
+                
             try:
                 proc.stdin.write(json.dumps({"action": "execute", "code": code}) + "\n")
                 proc.stdin.flush()
@@ -2127,15 +1779,15 @@ class KernelManager:
                 ws_send_fn({"type": "stderr", "text": f"Failed to send code: {e}"})
                 ws_send_fn({"type": "complete", "exec_count": exec_count})
                 return
-
-            # Read output from the worker until the cell complete marker
+                
+            completed_normally = False
             while proc.poll() is None:
                 line = proc.stdout.readline()
                 if not line:
                     break
                 line = line.rstrip('\n')
                 if line.startswith("---JUPY_STDOUT---"):
-                    continue  # stdout will come as standalone lines after this marker
+                    continue
                 elif line.startswith("---JUPY_STDERR---"):
                     continue
                 elif line.startswith("---JUPY_DISPLAY_DATA---"):
@@ -2164,13 +1816,16 @@ class KernelManager:
                         pass
                 elif "---JUPY_CELL_COMPLETE---" in line:
                     ws_send_fn({"type": "complete", "exec_count": exec_count})
+                    completed_normally = True
                     return
                 else:
-                    # Normal text output (stdout or stderr in the old protocol)
-                    # In the new worker script, actual output is sent with markers.
-                    # We'll forward anything unrecognized as stdout for safety.
                     if line.strip():
                         ws_send_fn({"type": "stdout", "text": line + "\n"})
+            
+            # FIX #3: Ensure complete message is sent if interrupted
+            if not completed_normally:
+                ws_send_fn({"type": "stderr", "text": "\n⏹ Execution interrupted by user.\n"})
+                ws_send_fn({"type": "complete", "exec_count": exec_count})
 
     def _execute_other_language(self, code, ws_send_fn, language, timeout, exec_count):
         if language == 'r':
@@ -2183,11 +1838,9 @@ class KernelManager:
             ws_send_fn({"type": "stderr", "text": f"Unsupported language: {language}"})
             ws_send_fn({"type": "complete", "exec_count": exec_count})
             return
-
         with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False, mode='w') as f:
             f.write(code)
             temp_file = f.name
-
         try:
             proc = subprocess.Popen(
                 [interpreter, temp_file],
@@ -2200,7 +1853,6 @@ class KernelManager:
             timer.start()
             stdout, stderr = proc.communicate()
             timer.cancel()
-
             if stdout:
                 ws_send_fn({"type": "stdout", "text": stdout})
             if stderr:
@@ -2324,10 +1976,10 @@ class KernelManager:
 ```py
 # jupy/core/kernel/worker_script.py
 # All code is embedded – no external imports required.
-
 KERNEL_WORKER_SCRIPT = r"""
 import sys, io, ast, base64, json, traceback, builtins, warnings, re, keyword, importlib, threading
 import contextlib, time, os, subprocess, glob, shutil, tempfile, shlex, pdb, gc, psutil
+
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 
 # ----------------------------------------------------------------------
@@ -2494,145 +2146,90 @@ def _run_magic(line, cell, namespace):
         return ""
     magic_name = parts[0].lstrip('%')
     args = parts[1:]
+    if magic_name == 'paste': return _magic_paste(args, cell, namespace)
+    elif magic_name == 'cpaste': return _magic_cpaste(args, cell, namespace)
+    elif magic_name == 'edit': return _magic_edit(args, cell, namespace)
+    elif magic_name == 'env': return _magic_env(args, cell, namespace)
+    elif magic_name == 'alias': return _magic_alias(args, cell, namespace)
+    elif magic_name == 'unalias': return _magic_unalias(args, cell, namespace)
+    elif magic_name == 'bookmark': return _magic_bookmark(args, cell, namespace)
+    elif magic_name == 'pushd': return _magic_pushd(args, cell, namespace)
+    elif magic_name == 'popd': return _magic_popd(args, cell, namespace)
+    elif magic_name == 'dirs': return _magic_dirs(args, cell, namespace)
+    elif magic_name == 'sc': return _magic_sc(args, cell, namespace)
+    elif magic_name == 'system': return _magic_system(args, cell, namespace)
+    elif magic_name == 'prun': return _magic_prun(args, cell, namespace)
+    elif magic_name == 'lprun': return _magic_lprun(args, cell, namespace)
+    elif magic_name == 'mprun': return _magic_mprun(args, cell, namespace)
+    elif magic_name == 'memit': return _magic_memit(args, cell, namespace)
+    elif magic_name == 'pdb': return _magic_pdb(args, cell, namespace)
+    elif magic_name == 'xmode': return _magic_xmode(args, cell, namespace)
+    elif magic_name == 'precision': return _magic_precision(args, cell, namespace)
+    elif magic_name == 'config': return "Configuration system is not implemented in Jupy."
+    elif magic_name == 'gui': return "GUI event loop integration is not implemented."
+    elif magic_name == 'load_ext': return _magic_load_ext(args, cell, namespace)
+    elif magic_name == 'unload_ext': return _magic_unload_ext(args, cell, namespace)
+    elif magic_name == 'reload_ext': return _magic_reload_ext(args, cell, namespace)
+    elif magic_name == 'time': return _magic_time(args, cell, namespace)
+    elif magic_name == 'timeit': return _magic_timeit(args, cell, namespace)
+    elif magic_name == 'cd': return _magic_cd(args, cell, namespace)
+    elif magic_name == 'pwd': return _magic_pwd(args, cell, namespace)
+    elif magic_name == 'ls': return _magic_ls(args, cell, namespace)
+    elif magic_name == 'who': return _magic_who(args, cell, namespace)
+    elif magic_name == 'reset': return _magic_reset(args, cell, namespace)
+    elif magic_name == 'matplotlib': return _magic_matplotlib(args, cell, namespace)
+    elif magic_name == 'autoreload': return _magic_autoreload(args, cell, namespace)
+    elif magic_name == 'run': return _magic_run(args, cell, namespace)
+    elif magic_name == 'load': return _magic_load(args, cell, namespace)
+    elif magic_name == 'store': return _magic_store(args, cell, namespace)
+    elif magic_name == 'history': return _magic_history(args, cell, namespace)
+    elif magic_name == 'debug': return "Debugger not implemented. Use %pdb (which is also limited in headless mode)."
+    elif magic_name == 'gc': return _magic_gc(args, cell, namespace)
+    elif magic_name == 'cache': return _magic_cache(args, cell, namespace)
+    elif magic_name == 'pip': return _magic_pip(args, cell, namespace)
+    else: return f"Unknown magic: {magic_name}"
 
-    if magic_name == 'paste':
-        return _magic_paste(args, cell, namespace)
-    elif magic_name == 'cpaste':
-        return _magic_cpaste(args, cell, namespace)
-    elif magic_name == 'edit':
-        return _magic_edit(args, cell, namespace)
-    elif magic_name == 'env':
-        return _magic_env(args, cell, namespace)
-    elif magic_name == 'alias':
-        return _magic_alias(args, cell, namespace)
-    elif magic_name == 'unalias':
-        return _magic_unalias(args, cell, namespace)
-    elif magic_name == 'bookmark':
-        return _magic_bookmark(args, cell, namespace)
-    elif magic_name == 'pushd':
-        return _magic_pushd(args, cell, namespace)
-    elif magic_name == 'popd':
-        return _magic_popd(args, cell, namespace)
-    elif magic_name == 'dirs':
-        return _magic_dirs(args, cell, namespace)
-    elif magic_name == 'sc':
-        return _magic_sc(args, cell, namespace)
-    elif magic_name == 'system':
-        return _magic_system(args, cell, namespace)
-    elif magic_name == 'prun':
-        return _magic_prun(args, cell, namespace)
-    elif magic_name == 'lprun':
-        return _magic_lprun(args, cell, namespace)
-    elif magic_name == 'mprun':
-        return _magic_mprun(args, cell, namespace)
-    elif magic_name == 'memit':
-        return _magic_memit(args, cell, namespace)
-    elif magic_name == 'pdb':
-        return _magic_pdb(args, cell, namespace)
-    elif magic_name == 'xmode':
-        return _magic_xmode(args, cell, namespace)
-    elif magic_name == 'precision':
-        return _magic_precision(args, cell, namespace)
-    elif magic_name == 'config':
-        return "Configuration system is not implemented in Jupy."
-    elif magic_name == 'gui':
-        return "GUI event loop integration is not implemented."
-    elif magic_name == 'load_ext':
-        return _magic_load_ext(args, cell, namespace)
-    elif magic_name == 'unload_ext':
-        return _magic_unload_ext(args, cell, namespace)
-    elif magic_name == 'reload_ext':
-        return _magic_reload_ext(args, cell, namespace)
-    elif magic_name == 'time':
-        return _magic_time(args, cell, namespace)
-    elif magic_name == 'timeit':
-        return _magic_timeit(args, cell, namespace)
-    elif magic_name == 'cd':
-        return _magic_cd(args, cell, namespace)
-    elif magic_name == 'pwd':
-        return _magic_pwd(args, cell, namespace)
-    elif magic_name == 'ls':
-        return _magic_ls(args, cell, namespace)
-    elif magic_name == 'who':
-        return _magic_who(args, cell, namespace)
-    elif magic_name == 'reset':
-        return _magic_reset(args, cell, namespace)
-    elif magic_name == 'matplotlib':
-        return _magic_matplotlib(args, cell, namespace)
-    elif magic_name == 'autoreload':
-        return _magic_autoreload(args, cell, namespace)
-    elif magic_name == 'run':
-        return _magic_run(args, cell, namespace)
-    elif magic_name == 'load':
-        return _magic_load(args, cell, namespace)
-    elif magic_name == 'store':
-        return _magic_store(args, cell, namespace)
-    elif magic_name == 'history':
-        return _magic_history(args, cell, namespace)
-    elif magic_name == 'debug':
-        return "Debugger not implemented. Use %pdb (which is also limited in headless mode)."
-    elif magic_name == 'gc':
-        return _magic_gc(args, cell, namespace)
-    elif magic_name == 'cache':
-        return _magic_cache(args, cell, namespace)
-    elif magic_name == 'pip':    # NEW: %pip magic
-        return _magic_pip(args, cell, namespace)
-    else:
-        return f"Unknown magic: {magic_name}"
-
-# ---- All magic functions (complete) ----
 def _magic_paste(args, cell, namespace):
     try:
         import pyperclip
         text = pyperclip.paste()
         exec(text, namespace)
         return "Pasted and executed code from clipboard."
-    except ImportError:
-        return "pyperclip not installed. Install: pip install pyperclip"
-    except Exception as e:
-        return f"Error: {e}"
+    except ImportError: return "pyperclip not installed. Install: pip install pyperclip"
+    except Exception as e: return f"Error: {e}"
 
 def _magic_cpaste(args, cell, namespace):
     print("Paste your code below. End with a blank line.", file=sys.stderr)
     lines = []
     while True:
-        try:
-            line = sys.stdin.readline()
-        except KeyboardInterrupt:
-            return "Interrupted."
-        if not line or line.strip() == '':
-            break
+        try: line = sys.stdin.readline()
+        except KeyboardInterrupt: return "Interrupted."
+        if not line or line.strip() == '': break
         lines.append(line)
     code = ''.join(lines)
     try:
         exec(code, namespace)
         return "Executed pasted code."
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as e: return f"Error: {e}"
 
 def _magic_edit(args, cell, namespace):
     editor = os.environ.get('EDITOR', 'nano')
     import tempfile
-    with tempfile.NamedTemporaryFile(suffix='.py', delete=False) as f:
-        fname = f.name
+    with tempfile.NamedTemporaryFile(suffix='.py', delete=False) as f: fname = f.name
     try:
         subprocess.run([editor, fname], check=True)
-        with open(fname, 'r') as f:
-            code = f.read()
+        with open(fname, 'r') as f: code = f.read()
         if code:
             exec(code, namespace)
             return f"Edited and executed {fname}"
-        else:
-            return "No code entered."
-    except Exception as e:
-        return f"Error: {e}"
+        else: return "No code entered."
+    except Exception as e: return f"Error: {e}"
     finally:
         try: os.unlink(fname)
         except: pass
 
 def _magic_env(args, cell, namespace):
-    if not args:
-        return '\n'.join(f"{k}={v}" for k,v in os.environ.items())
+    if not args: return '\n'.join(f"{k}={v}" for k,v in os.environ.items())
     if '=' in args[0]:
         key, val = args[0].split('=', 1)
         os.environ[key] = val
@@ -2643,10 +2240,8 @@ def _magic_env(args, cell, namespace):
 
 def _magic_alias(args, cell, namespace):
     global _alias_dict
-    if not args:
-        return '\n'.join(f"{k} -> {v}" for k,v in _alias_dict.items())
-    if len(args) == 1:
-        return _alias_dict.get(args[0], f"Alias {args[0]} not found.")
+    if not args: return '\n'.join(f"{k} -> {v}" for k,v in _alias_dict.items())
+    if len(args) == 1: return _alias_dict.get(args[0], f"Alias {args[0]} not found.")
     else:
         name = args[0]
         cmd = ' '.join(args[1:])
@@ -2655,26 +2250,22 @@ def _magic_alias(args, cell, namespace):
 
 def _magic_unalias(args, cell, namespace):
     global _alias_dict
-    if not args:
-        return "Usage: %unalias name"
+    if not args: return "Usage: %unalias name"
     name = args[0]
     if name in _alias_dict:
         del _alias_dict[name]
         return f"Removed alias {name}"
-    else:
-        return f"Alias {name} not found."
+    else: return f"Alias {name} not found."
 
 def _magic_bookmark(args, cell, namespace):
     global _bookmark_dict
-    if not args:
-        return '\n'.join(f"{k} -> {v}" for k,v in _bookmark_dict.items())
+    if not args: return '\n'.join(f"{k} -> {v}" for k,v in _bookmark_dict.items())
     if len(args) == 1:
         name = args[0]
         if name in _bookmark_dict:
             os.chdir(_bookmark_dict[name])
             return f"Changed to bookmark {name}: {_bookmark_dict[name]}"
-        else:
-            return f"Bookmark {name} not found."
+        else: return f"Bookmark {name} not found."
     else:
         name = args[0]
         path = args[1] if len(args) > 1 else os.getcwd()
@@ -2698,8 +2289,7 @@ def _magic_pushd(args, cell, namespace):
 
 def _magic_popd(args, cell, namespace):
     global _dir_stack
-    if not _dir_stack:
-        return "Directory stack is empty."
+    if not _dir_stack: return "Directory stack is empty."
     prev = _dir_stack.pop()
     os.chdir(prev)
     return f"Popped back to {prev}"
@@ -2709,86 +2299,66 @@ def _magic_dirs(args, cell, namespace):
     return '\n'.join(f"{i}: {d}" for i,d in enumerate(_dir_stack))
 
 def _magic_sc(args, cell, namespace):
-    if not args:
-        return "Usage: %sc command"
+    if not args: return "Usage: %sc command"
     cmd = ' '.join(args)
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
         return result.stdout + result.stderr
-    except Exception as e:
-        return str(e)
+    except Exception as e: return str(e)
 
 def _magic_system(args, cell, namespace):
-    if not args:
-        return "Usage: %system command"
+    if not args: return "Usage: %system command"
     cmd = ' '.join(args)
     try:
         subprocess.run(cmd, shell=True, check=False)
         return ""
-    except Exception as e:
-        return str(e)
+    except Exception as e: return str(e)
 
 def _magic_prun(args, cell, namespace):
     import cProfile, pstats, io
-    if not args:
-        return "Usage: %prun statement"
+    if not args: return "Usage: %prun statement"
     code = ' '.join(args)
-    if cell is not None:
-        code = cell
+    if cell is not None: code = cell
     prof = cProfile.Profile()
     try:
         prof.enable()
         exec(code, namespace)
         prof.disable()
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as e: return f"Error: {e}"
     stream = io.StringIO()
     stats = pstats.Stats(prof, stream=stream)
     stats.sort_stats('cumtime').print_stats(20)
     return stream.getvalue()
 
 def _magic_lprun(args, cell, namespace):
-    try:
-        from line_profiler import LineProfiler
-    except ImportError:
-        return "line_profiler not installed. Install: pip install line_profiler"
-    if not args:
-        return "Usage: %lprun statement"
+    try: from line_profiler import LineProfiler
+    except ImportError: return "line_profiler not installed. Install: pip install line_profiler"
+    if not args: return "Usage: %lprun statement"
     code = ' '.join(args)
-    if cell is not None:
-        code = cell
+    if cell is not None: code = cell
     prof = LineProfiler()
     try:
         prof.runctx(code, namespace, namespace)
         return prof.print_stats()
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as e: return f"Error: {e}"
 
 def _magic_mprun(args, cell, namespace):
-    try:
-        from memory_profiler import memory_usage
-    except ImportError:
-        return "memory_profiler not installed. Install: pip install memory_profiler"
-    if not args:
-        return "Usage: %mprun statement"
+    try: from memory_profiler import memory_usage
+    except ImportError: return "memory_profiler not installed. Install: pip install memory_profiler"
+    if not args: return "Usage: %mprun statement"
     code = ' '.join(args)
-    if cell is not None:
-        code = cell
-    def f():
-        exec(code, namespace)
+    if cell is not None: code = cell
+    def f(): exec(code, namespace)
     mem = memory_usage(f, interval=0.1, timeout=10)
     return f"Memory usage: {max(mem):.2f} MiB"
 
 def _magic_memit(args, cell, namespace):
-    if not args:
-        return "Usage: %memit statement"
+    if not args: return "Usage: %memit statement"
     code = ' '.join(args)
-    if cell is not None:
-        code = cell
+    if cell is not None: code = cell
     try:
         from memory_profiler import memory_usage
-        def f():
-            exec(code, namespace)
+        def f(): exec(code, namespace)
         mem = memory_usage(f, interval=0.1, timeout=10)
         return f"Memory usage: {max(mem):.2f} MiB"
     except ImportError:
@@ -2800,13 +2370,11 @@ def _magic_memit(args, cell, namespace):
             after = process.memory_info().rss
             diff = (after - before) / (1024*1024)
             return f"Memory used: {diff:.2f} MiB"
-        except:
-            return "memory_profiler or psutil required."
+        except: return "memory_profiler or psutil required."
 
 def _magic_pdb(args, cell, namespace):
     global _pdb_mode
-    if not args:
-        return f"pdb mode is {'on' if _pdb_mode else 'off'}"
+    if not args: return f"pdb mode is {'on' if _pdb_mode else 'off'}"
     val = args[0].lower()
     if val in ('on', 'true', '1'):
         _pdb_mode = True
@@ -2817,132 +2385,106 @@ def _magic_pdb(args, cell, namespace):
 
 def _magic_xmode(args, cell, namespace):
     global _xmode
-    if not args:
-        return f"xmode = {_xmode}"
+    if not args: return f"xmode = {_xmode}"
     mode = args[0].capitalize()
     if mode in ('Plain', 'Context', 'Verbose'):
         _xmode = mode
         return f"xmode set to {mode}"
-    else:
-        return f"Invalid mode: {mode}. Use Plain, Context, or Verbose."
+    else: return f"Invalid mode: {mode}. Use Plain, Context, or Verbose."
 
 def _magic_precision(args, cell, namespace):
     global _float_precision
-    if not args:
-        return f"float precision = {_float_precision}"
+    if not args: return f"float precision = {_float_precision}"
     try:
         val = int(args[0])
         _float_precision = val
         return f"Set float precision to {val}"
-    except:
-        return "Usage: %precision <integer>"
+    except: return "Usage: %precision <integer>"
 
 def _magic_load_ext(args, cell, namespace):
-    if not args:
-        return "Usage: %load_ext module"
+    if not args: return "Usage: %load_ext module"
     try:
         __import__(args[0])
         return f"Loaded extension {args[0]}"
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as e: return f"Error: {e}"
 
 def _magic_unload_ext(args, cell, namespace):
-    if not args:
-        return "Usage: %unload_ext module"
+    if not args: return "Usage: %unload_ext module"
     if args[0] in sys.modules:
         del sys.modules[args[0]]
         return f"Unloaded {args[0]}"
-    else:
-        return f"{args[0]} not loaded."
+    else: return f"{args[0]} not loaded."
 
 def _magic_reload_ext(args, cell, namespace):
-    if not args:
-        return "Usage: %reload_ext module"
+    if not args: return "Usage: %reload_ext module"
     try:
         import importlib
         mod = importlib.import_module(args[0])
         importlib.reload(mod)
         return f"Reloaded {args[0]}"
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as e: return f"Error: {e}"
 
 def _magic_time(args, cell, namespace):
     code = ' '.join(args) if args else ''
-    if not code:
-        return "Usage: %time statement"
+    if not code: return "Usage: %time statement"
     start = time.perf_counter()
-    try:
-        exec(code, namespace)
-    except Exception as e:
-        return f"Error: {e}"
+    try: exec(code, namespace)
+    except Exception as e: return f"Error: {e}"
     elapsed = time.perf_counter() - start
     return f"CPU times: user {elapsed:.6f} s, sys: 0 s, total: {elapsed:.6f} s"
 
 def _magic_timeit(args, cell, namespace):
     import timeit
-    if cell is not None:
-        code = cell
+    if cell is not None: code = cell
     else:
         code = ' '.join(args) if args else ''
-        if not code:
-            return "Usage: %timeit statement"
+        if not code: return "Usage: %timeit statement"
     try:
         timer = timeit.Timer(code, globals=namespace)
         number, _ = timer.autorange()
         result = timer.timeit(number)
         return f"{result:.6f} seconds (average over {number} runs)"
-    except Exception as e:
-        return f"Error in timeit: {e}"
+    except Exception as e: return f"Error in timeit: {e}"
 
 def _magic_cd(args, cell, namespace):
-    if not args:
-        return f"Current directory: {os.getcwd()}"
+    if not args: return f"Current directory: {os.getcwd()}"
     path = args[0]
     try:
         os.chdir(path)
         return f"Changed to: {os.getcwd()}"
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as e: return f"Error: {e}"
 
-def _magic_pwd(args, cell, namespace):
-    return os.getcwd()
+def _magic_pwd(args, cell, namespace): return os.getcwd()
 
 def _magic_ls(args, cell, namespace):
     path = args[0] if args else '.'
     try:
         items = os.listdir(path)
         return '\n'.join(items)
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as e: return f"Error: {e}"
 
 def _magic_who(args, cell, namespace):
     vars_list = [k for k in namespace.keys() if not k.startswith('_') and k not in ('display', '__builtins__')]
-    if not vars_list:
-        return "No user variables."
+    if not vars_list: return "No user variables."
     return "Variables:\n" + '\n'.join(vars_list)
 
 def _magic_reset(args, cell, namespace):
     keep = ['display', '__builtins__']
     for k in list(namespace.keys()):
-        if k not in keep and not k.startswith('_'):
-            del namespace[k]
+        if k not in keep and not k.startswith('_'): del namespace[k]
     return "Namespace reset."
 
 def _magic_matplotlib(args, cell, namespace):
-    # Default to 'agg' (headless), map 'inline' to 'agg'
     backend = 'agg'
     if args:
         req = args[0].strip()
-        if req.lower() == 'inline':
-            backend = 'agg'
-        else:
-            backend = req
+        if req.lower() == 'inline': backend = 'agg'
+        else: backend = req
     try:
         import matplotlib
         matplotlib.use(backend, force=True)
         return f"Matplotlib backend set to '{backend}' (headless mode)."
-    except Exception as e:
-        return f"Error setting backend: {e}"
+    except Exception as e: return f"Error setting backend: {e}"
 
 def _magic_autoreload(args, cell, namespace):
     global _autoreload_enabled
@@ -2952,66 +2494,53 @@ def _magic_autoreload(args, cell, namespace):
     elif args and args[0] == '0':
         _autoreload_enabled = False
         return "Autoreload disabled."
-    else:
-        return f"Autoreload currently {'enabled' if _autoreload_enabled else 'disabled'}. Use %autoreload 2 to enable, %autoreload 0 to disable. (Experimental)"
+    else: return f"Autoreload currently {'enabled' if _autoreload_enabled else 'disabled'}. Use %autoreload 2 to enable, %autoreload 0 to disable. (Experimental)"
 
 def _magic_run(args, cell, namespace):
-    if not args:
-        return "Usage: %run script.py [args]"
+    if not args: return "Usage: %run script.py [args]"
     filename = args[0]
     script_args = args[1:]
     old_argv = sys.argv
     sys.argv = [filename] + script_args
     try:
-        with open(filename, 'r') as f:
-            code = f.read()
+        with open(filename, 'r') as f: code = f.read()
         exec(code, namespace)
         return f"Executed {filename} successfully."
-    except Exception as e:
-        return f"Error running script: {e}"
-    finally:
-        sys.argv = old_argv
+    except Exception as e: return f"Error running script: {e}"
+    finally: sys.argv = old_argv
 
 def _magic_load(args, cell, namespace):
-    if not args:
-        return "Usage: %load filename.py"
+    if not args: return "Usage: %load filename.py"
     filename = args[0]
     try:
-        with open(filename, 'r') as f:
-            content = f.read()
+        with open(filename, 'r') as f: content = f.read()
         sys.stdout.write("---JUPY_LOAD_CELL---\n")
         sys.stdout.write(json.dumps({"content": content}) + "\n")
         sys.stdout.flush()
         return ""
-    except Exception as e:
-        return f"Error loading file: {e}"
+    except Exception as e: return f"Error loading file: {e}"
 
 _stored_vars = {}
 def _magic_store(args, cell, namespace):
     global _stored_vars
-    if not args:
-        return "Usage: %store var  or  %store -r var"
+    if not args: return "Usage: %store var  or  %store -r var"
     if args[0] == '-r':
         var = args[1] if len(args) > 1 else None
-        if var is None:
-            return "Usage: %store -r var"
+        if var is None: return "Usage: %store -r var"
         if var in _stored_vars:
             namespace[var] = _stored_vars[var]
             return f"Restored {var}"
-        else:
-            return f"Variable {var} not found in store."
+        else: return f"Variable {var} not found in store."
     else:
         var = args[0]
         if var in namespace:
             _stored_vars[var] = namespace[var]
             return f"Stored {var}"
-        else:
-            return f"Variable {var} not found in namespace."
+        else: return f"Variable {var} not found in namespace."
 
 def _magic_history(args, cell, namespace):
     lines = _history_lines[-20:] if _history_lines else []
-    if not lines:
-        return "No history yet."
+    if not lines: return "No history yet."
     return "History:\n" + '\n'.join(f"{i+1}: {line}" for i, line in enumerate(lines))
 
 def _magic_gc(args, cell, namespace):
@@ -3023,44 +2552,34 @@ def _magic_gc(args, cell, namespace):
     return f"Garbage collection: {collected} objects collected. Memory: {before:.1f} MB -> {after:.1f} MB (freed {before-after:.1f} MB)"
 
 def _magic_cache(args, cell, namespace):
-    if len(args) < 2:
-        return "Usage: %cache save varname [filename]  or  %cache load varname [filename]"
+    if len(args) < 2: return "Usage: %cache save varname [filename]  or  %cache load varname [filename]"
     action = args[0]
     varname = args[1]
     filename = args[2] if len(args) > 2 else f"{varname}.pkl"
-    try:
-        import joblib
-    except ImportError:
-        return "joblib not installed. Please install: pip install joblib"
+    try: import joblib
+    except ImportError: return "joblib not installed. Please install: pip install joblib"
     if action == 'save':
-        if varname not in namespace:
-            return f"Variable {varname} not found in namespace."
+        if varname not in namespace: return f"Variable {varname} not found in namespace."
         obj = namespace[varname]
         joblib.dump(obj, filename)
         return f"Saved {varname} to {filename}"
     elif action == 'load':
-        if not os.path.exists(filename):
-            return f"File {filename} not found."
+        if not os.path.exists(filename): return f"File {filename} not found."
         obj = joblib.load(filename)
         namespace[varname] = obj
         return f"Loaded {varname} from {filename}"
-    else:
-        return "Invalid action. Use 'save' or 'load'."
+    else: return "Invalid action. Use 'save' or 'load'."
 
 def _magic_pip(args, cell, namespace):
     "%pip install <pkg> – install into the kernel's venv."
-    if not args:
-        return "Usage: %pip install <package>"
-    # Build command using this Python interpreter
+    if not args: return "Usage: %pip install <package>"
     cmd = [sys.executable, "-m", "pip"] + args
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         output = (proc.stdout or "") + (proc.stderr or "")
         return output or "Done."
-    except subprocess.TimeoutExpired:
-        return "pip install timed out (5 min limit)."
-    except Exception as e:
-        return f"Error: {e}"
+    except subprocess.TimeoutExpired: return "pip install timed out (5 min limit)."
+    except Exception as e: return f"Error: {e}"
 
 # ----------------------------------------------------------------------
 # Full ipywidgets system (unchanged)
@@ -3079,40 +2598,40 @@ class WidgetProxy:
         self.kwargs = kwargs
         self._callbacks = {}
         self._children = kwargs.pop('children', [])
-        self._send_widget_event('create', {**kwargs, 'widget_id': self.id, 'type': widget_type})
+        
+        # FIX #4: Include children IDs in the payload
+        children_ids = [c.id if hasattr(c, 'id') else c for c in self._children]
+        payload = {**kwargs, 'widget_id': self.id, 'type': widget_type, 'children': children_ids}
+        self._send_widget_event('create', payload)
+        
         _widgets[self.id] = self
-
+        
     def _send_widget_event(self, event, data):
         msg = {'event': event, 'widget_id': self.id, 'type': self.type, 'data': data}
         sys.stdout.write("---JUPY_WIDGET---\n")
         sys.stdout.write(json.dumps(msg) + "\n")
         sys.stdout.flush()
-
+        
     def set_state(self, **kwargs):
         self.kwargs.update(kwargs)
         self._send_widget_event('update', kwargs)
-
+        
     def observe(self, callback, names='value'):
-        if isinstance(names, str):
-            names = [names]
+        if isinstance(names, str): names = [names]
         for name in names:
-            if name not in self._callbacks:
-                self._callbacks[name] = []
+            if name not in self._callbacks: self._callbacks[name] = []
             self._callbacks[name].append(callback)
-
-    def on_click(self, callback):
-        self.observe(callback, 'click')
-
+            
+    def on_click(self, callback): self.observe(callback, 'click')
+    
     def _handle_frontend_event(self, event_data):
         for attr, value in event_data.items():
             if attr == 'value' or attr == 'click':
                 self.kwargs[attr] = value
                 if attr in self._callbacks:
-                    for cb in self._callbacks[attr]:
-                        cb(value)
+                    for cb in self._callbacks[attr]: cb(value)
                 for link in _links.values():
-                    if link.source_id == self.id:
-                        link.propagate(value)
+                    if link.source_id == self.id: link.propagate(value)
 
 class OutputWidget(WidgetProxy):
     def __init__(self, **kwargs):
@@ -3122,23 +2641,19 @@ class OutputWidget(WidgetProxy):
         self._original_stderr = sys.stderr
         self._captured_out = io.StringIO()
         self._captured_err = io.StringIO()
-
     def __enter__(self):
         self._capturing = True
         sys.stdout = self._captured_out
         sys.stderr = self._captured_err
         return self
-
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._capturing = False
         sys.stdout = self._original_stdout
         sys.stderr = self._original_stderr
         out = self._captured_out.getvalue()
         err = self._captured_err.getvalue()
-        if out:
-            self._send_widget_event('output_stream', {'type': 'stdout', 'text': out})
-        if err:
-            self._send_widget_event('output_stream', {'type': 'stderr', 'text': err})
+        if out: self._send_widget_event('output_stream', {'type': 'stdout', 'text': out})
+        if err: self._send_widget_event('output_stream', {'type': 'stderr', 'text': err})
         self._captured_out = io.StringIO()
         self._captured_err = io.StringIO()
         return False
@@ -3165,122 +2680,59 @@ class Link:
         sys.stdout.write("---JUPY_WIDGET---\n")
         sys.stdout.write(json.dumps(msg) + "\n")
         sys.stdout.flush()
-
     def propagate(self, value):
-        if self.transform:
-            value = self.transform(value)
+        if self.transform: value = self.transform(value)
         target = _widgets.get(self.target_id)
-        if target:
-            target.set_state(value=value)
+        if target: target.set_state(value=value)
 
-def link(source, target, transform=None):
-    return Link(source, target, transform, bidirectional=False)
+def link(source, target, transform=None): return Link(source, target, transform, bidirectional=False)
+def dlink(source, target, transform=None): return Link(source, target, transform, bidirectional=True)
 
-def dlink(source, target, transform=None):
-    return Link(source, target, transform, bidirectional=True)
-
-# ---- Widget classes ----
-def IntSlider(**kwargs):
-    return WidgetProxy('IntSlider', **kwargs)
-
-def FloatSlider(**kwargs):
-    return WidgetProxy('FloatSlider', **kwargs)
-
-def IntText(**kwargs):
-    return WidgetProxy('IntText', **kwargs)
-
-def FloatText(**kwargs):
-    return WidgetProxy('FloatText', **kwargs)
-
-def Checkbox(**kwargs):
-    return WidgetProxy('Checkbox', **kwargs)
-
-def RadioButtons(**kwargs):
-    return WidgetProxy('RadioButtons', **kwargs)
-
-def ToggleButton(**kwargs):
-    return WidgetProxy('ToggleButton', **kwargs)
-
-def ToggleButtons(**kwargs):
-    return WidgetProxy('ToggleButtons', **kwargs)
-
-def Dropdown(**kwargs):
-    return WidgetProxy('Dropdown', **kwargs)
-
-def Select(**kwargs):
-    return WidgetProxy('Select', **kwargs)
-
-def SelectMultiple(**kwargs):
-    return WidgetProxy('SelectMultiple', **kwargs)
-
-def DatePicker(**kwargs):
-    return WidgetProxy('DatePicker', **kwargs)
-
-def TimePicker(**kwargs):
-    return WidgetProxy('TimePicker', **kwargs)
-
-def ColorPicker(**kwargs):
-    return WidgetProxy('ColorPicker', **kwargs)
-
-def FileUpload(**kwargs):
-    return WidgetProxy('FileUpload', **kwargs)
-
-def Play(**kwargs):
-    return WidgetProxy('Play', **kwargs)
-
-def VBox(**kwargs):
-    return WidgetProxy('VBox', **kwargs)
-
-def HBox(**kwargs):
-    return WidgetProxy('HBox', **kwargs)
-
-def GridBox(**kwargs):
-    return WidgetProxy('GridBox', **kwargs)
-
-def Accordion(**kwargs):
-    return WidgetProxy('Accordion', **kwargs)
-
-def Tab(**kwargs):
-    return WidgetProxy('Tab', **kwargs)
-
-def Stack(**kwargs):
-    return WidgetProxy('Stack', **kwargs)
-
-def Box(**kwargs):
-    return WidgetProxy('Box', **kwargs)
-
-def Output(**kwargs):
-    return OutputWidget(**kwargs)
+def IntSlider(**kwargs): return WidgetProxy('IntSlider', **kwargs)
+def FloatSlider(**kwargs): return WidgetProxy('FloatSlider', **kwargs)
+def IntText(**kwargs): return WidgetProxy('IntText', **kwargs)
+def FloatText(**kwargs): return WidgetProxy('FloatText', **kwargs)
+def Checkbox(**kwargs): return WidgetProxy('Checkbox', **kwargs)
+def RadioButtons(**kwargs): return WidgetProxy('RadioButtons', **kwargs)
+def ToggleButton(**kwargs): return WidgetProxy('ToggleButton', **kwargs)
+def ToggleButtons(**kwargs): return WidgetProxy('ToggleButtons', **kwargs)
+def Dropdown(**kwargs): return WidgetProxy('Dropdown', **kwargs)
+def Select(**kwargs): return WidgetProxy('Select', **kwargs)
+def SelectMultiple(**kwargs): return WidgetProxy('SelectMultiple', **kwargs)
+def DatePicker(**kwargs): return WidgetProxy('DatePicker', **kwargs)
+def TimePicker(**kwargs): return WidgetProxy('TimePicker', **kwargs)
+def ColorPicker(**kwargs): return WidgetProxy('ColorPicker', **kwargs)
+def FileUpload(**kwargs): return WidgetProxy('FileUpload', **kwargs)
+def Play(**kwargs): return WidgetProxy('Play', **kwargs)
+def VBox(**kwargs): return WidgetProxy('VBox', **kwargs)
+def HBox(**kwargs): return WidgetProxy('HBox', **kwargs)
+def GridBox(**kwargs): return WidgetProxy('GridBox', **kwargs)
+def Accordion(**kwargs): return WidgetProxy('Accordion', **kwargs)
+def Tab(**kwargs): return WidgetProxy('Tab', **kwargs)
+def Stack(**kwargs): return WidgetProxy('Stack', **kwargs)
+def Box(**kwargs): return WidgetProxy('Box', **kwargs)
+def Output(**kwargs): return OutputWidget(**kwargs)
 
 def interact(func=None, **options):
     if func is None:
-        def decorator(f):
-            return interact(f, **options)
+        def decorator(f): return interact(f, **options)
         return decorator
     else:
         widgets = {}
         for name, value in options.items():
-            if isinstance(value, (int, float)):
-                widgets[name] = IntSlider(value=value, min=0, max=10*value, description=name)
-            elif isinstance(value, list):
-                widgets[name] = Dropdown(options=value, value=value[0], description=name)
-            elif isinstance(value, bool):
-                widgets[name] = Checkbox(value=value, description=name)
-            else:
-                widgets[name] = IntText(value=value, description=name)
-        if widgets:
-            display(VBox(children=list(widgets.values())))
+            if isinstance(value, (int, float)): widgets[name] = IntSlider(value=value, min=0, max=10*value, description=name)
+            elif isinstance(value, list): widgets[name] = Dropdown(options=value, value=value[0], description=name)
+            elif isinstance(value, bool): widgets[name] = Checkbox(value=value, description=name)
+            else: widgets[name] = IntText(value=value, description=name)
+        if widgets: display(VBox(children=list(widgets.values())))
         def wrapper(*args, **kwargs):
             kwargs = {name: w.kwargs.get('value') for name, w in widgets.items()}
             result = func(**kwargs)
-            if result is not None:
-                display(result)
+            if result is not None: display(result)
             return result
-        for w in widgets.values():
-            w.observe(lambda _: wrapper(), 'value')
+        for w in widgets.values(): w.observe(lambda _: wrapper(), 'value')
         return wrapper
 
-# Populate namespace with widget classes
 namespace['IntSlider'] = IntSlider
 namespace['FloatSlider'] = FloatSlider
 namespace['IntText'] = IntText
@@ -3318,81 +2770,55 @@ def _send_display_data(mimebundle):
     sys.stdout.flush()
 
 def _encode_binary(data):
-    if isinstance(data, bytes):
-        return base64.b64encode(data).decode('ascii')
+    if isinstance(data, bytes): return base64.b64encode(data).decode('ascii')
     return data
 
 def display(*objs, raw=False, **kwargs):
-    if len(objs) == 0:
-        return
+    if len(objs) == 0: return
     if len(objs) > 1:
-        for obj in objs:
-            display(obj, raw=raw, **kwargs)
+        for obj in objs: display(obj, raw=raw, **kwargs)
         return
-
     obj = objs[0]
-
     if isinstance(obj, dict) and any(k in obj for k in ('text/html', 'text/plain', 'image/png', 'image/svg+xml')):
         for mime in ('image/png', 'image/jpeg', 'image/gif'):
-            if mime in obj:
-                obj[mime] = _encode_binary(obj[mime])
+            if mime in obj: obj[mime] = _encode_binary(obj[mime])
         _send_display_data(obj)
         return
-
     mimebundle = {}
-
     if hasattr(obj, '_repr_mimebundle_'):
         try:
             bundle = obj._repr_mimebundle_()
             if isinstance(bundle, dict):
                 mimebundle.update(bundle)
                 for key, val in mimebundle.items():
-                    if isinstance(val, list):
-                        mimebundle[key] = val[0] if val else None
-        except Exception:
-            pass
-
+                    if isinstance(val, list): mimebundle[key] = val[0] if val else None
+        except Exception: pass
     for fmt in ('html', 'svg', 'latex', 'markdown', 'json', 'png', 'jpeg', 'gif'):
         if fmt not in mimebundle:
             method = getattr(obj, f'_repr_{fmt}_', None)
             if method is not None:
                 try:
                     data = method()
-                    if data is not None:
-                        mimebundle[f'text/{fmt}'] = data
-                except Exception:
-                    pass
-
+                    if data is not None: mimebundle[f'text/{fmt}'] = data
+                except Exception: pass
     if hasattr(obj, '_repr_html_'):
         try:
             html = obj._repr_html_()
-            if html:
-                mimebundle['text/html'] = html
-        except Exception:
-            pass
-
+            if html: mimebundle['text/html'] = html
+        except Exception: pass
     if not mimebundle:
-        try:
-            mimebundle['text/plain'] = repr(obj)
-        except Exception:
-            mimebundle['text/plain'] = str(obj)
-
+        try: mimebundle['text/plain'] = repr(obj)
+        except Exception: mimebundle['text/plain'] = str(obj)
     for mime in ('image/png', 'image/jpeg', 'image/gif'):
-        if mime in mimebundle:
-            mimebundle[mime] = _encode_binary(mimebundle[mime])
-
-    if raw:
-        mimebundle = {'text/plain': mimebundle.get('text/plain', str(obj))}
-
-    if mimebundle:
-        _send_display_data(mimebundle)
+        if mime in mimebundle: mimebundle[mime] = _encode_binary(mimebundle[mime])
+    if raw: mimebundle = {'text/plain': mimebundle.get('text/plain', str(obj))}
+    if mimebundle: _send_display_data(mimebundle)
 
 def _patch_ipython_display():
     try:
         import IPython.display
         IPython.display.display = display
-    except ImportError:
-        pass
+    except ImportError: pass
 
 sys.stdout.write("---JUPY_KERNEL_READY---\n")
 sys.stdout.flush()
@@ -3410,8 +2836,7 @@ def _capture_plots():
                 import matplotlib
                 matplotlib.use("Agg", force=True)
                 _matplotlib_backend_set = True
-            except Exception:
-                pass
+            except Exception: pass
         fignums = plt.get_fignums()
         for i in list(fignums):
             try:
@@ -3439,8 +2864,7 @@ def _warmup_jedi():
     try:
         import jedi
         jedi.Script("import math\nmath.").complete(2, 5)
-    except:
-        pass
+    except: pass
 threading.Thread(target=_warmup_jedi, daemon=True).start()
 
 def _custom_input(prompt=""):
@@ -3448,8 +2872,7 @@ def _custom_input(prompt=""):
     sys.stdout.write(f"---JUPY_STDIN_REQ:{prompt_str}---\n")
     sys.stdout.flush()
     line = sys.stdin.readline()
-    if not line:
-        raise KeyboardInterrupt("Input stream closed.")
+    if not line: raise KeyboardInterrupt("Input stream closed.")
     return line.rstrip("\r\n")
 builtins.input = _custom_input
 
@@ -3458,8 +2881,7 @@ builtins.input = _custom_input
 # ----------------------------------------------------------------------
 while True:
     line = sys.stdin.readline()
-    if not line:
-        break
+    if not line: break
     try:
         data = json.loads(line)
         action = data.get("action")
@@ -3480,26 +2902,18 @@ while True:
         elif action == "widget_event":
             widget_id = data.get('widget_id')
             event_data = data.get('data', {})
-            if widget_id in _widgets:
-                _widgets[widget_id]._handle_frontend_event(event_data)
+            if widget_id in _widgets: _widgets[widget_id]._handle_frontend_event(event_data)
             continue
         elif action == "list_vars":
             vars_list = []
             for name, val in namespace.items():
-                if name.startswith('_'):
-                    continue
+                if name.startswith('_'): continue
                 try:
                     size = sys.getsizeof(val)
                     type_name = type(val).__name__
                     length = len(val) if hasattr(val, '__len__') else None
-                    vars_list.append({
-                        "name": name,
-                        "type": type_name,
-                        "size": size,
-                        "length": length,
-                    })
-                except:
-                    pass
+                    vars_list.append({"name": name, "type": type_name, "size": size, "length": length})
+                except: pass
             sys.stdout.write(f"---JUPY_VARS:{json.dumps(vars_list)}---\n")
             sys.stdout.flush()
         elif action == "df_preview":
@@ -3510,12 +2924,9 @@ while True:
                 obj = namespace[var_name]
                 try:
                     import pandas as pd
-                    if isinstance(obj, pd.DataFrame):
-                        html = obj.head(rows).to_html()
-                    elif hasattr(obj, 'to_html'):
-                        html = obj.to_html()
-                except:
-                    pass
+                    if isinstance(obj, pd.DataFrame): html = obj.head(rows).to_html()
+                    elif hasattr(obj, 'to_html'): html = obj.to_html()
+                except: pass
             sys.stdout.write(f"---JUPY_DF_HTML:{html}---\n")
             sys.stdout.flush()
         elif action == "set_breakpoints":
@@ -3541,8 +2952,6 @@ while True:
         elif action == "execute":
             code = data.get("code", "")
             lines = code.splitlines()
-            
-            # ---------- Cell magic %% ----------
             if lines and lines[0].strip().startswith('%%'):
                 magic_line = lines[0]
                 cell_body = '\n'.join(lines[1:])
@@ -3557,21 +2966,14 @@ while True:
                 sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
                 sys.stdout.flush()
                 continue
-
-            # ---------- Line magic % ----------
-            # Skip leading empty lines
             non_empty_lines = [l for l in lines if l.strip()]
             if non_empty_lines and non_empty_lines[0].strip().startswith('%'):
-                # First non-empty line is a magic
                 magic_line = non_empty_lines[0].strip()
-                # Remove that line from the original lines
                 first_non_empty_idx = next(i for i, l in enumerate(lines) if l.strip())
-                # Run the magic
                 result = _run_magic(magic_line, None, namespace)
                 if result:
                     sys.stdout.write("---JUPY_STDOUT---\n")
                     sys.stdout.write(result + "\n")
-                # Keep the rest of the lines (including empty ones)
                 remaining_lines = lines[first_non_empty_idx+1:]
                 remaining_code = '\n'.join(remaining_lines)
                 if not remaining_code.strip():
@@ -3580,25 +2982,16 @@ while True:
                     continue
                 code = remaining_code
                 lines = remaining_lines
-
-            # ---------- System command ! ----------
-            # Check the first non-empty line for !
             non_empty_lines = [l for l in lines if l.strip()]
             if non_empty_lines and non_empty_lines[0].strip().startswith('!'):
                 cmd_line = non_empty_lines[0].strip()
-                if cmd_line.startswith('!'):
-                    cmd = cmd_line[1:].strip()
-                else:
-                    cmd = cmd_line
+                if cmd_line.startswith('!'): cmd = cmd_line[1:].strip()
+                else: cmd = cmd_line
                 first_non_empty_idx = next(i for i, l in enumerate(lines) if l.strip())
-                # Intercept pip commands to use sys.executable
                 if cmd.startswith('pip ') or cmd.startswith('pip3 '):
                     pip_args = cmd.split()[1:]
                     try:
-                        proc = subprocess.run(
-                            [sys.executable, "-m", "pip"] + pip_args,
-                            capture_output=True, text=True, timeout=300
-                        )
+                        proc = subprocess.run([sys.executable, "-m", "pip"] + pip_args, capture_output=True, text=True, timeout=300)
                         if proc.stdout:
                             sys.stdout.write("---JUPY_STDOUT---\n")
                             sys.stdout.write(proc.stdout)
@@ -3620,7 +3013,6 @@ while True:
                     except Exception as e:
                         sys.stdout.write("---JUPY_STDERR---\n")
                         sys.stdout.write(str(e) + "\n")
-                # Remove the command line from code
                 remaining_lines = lines[first_non_empty_idx+1:]
                 remaining_code = '\n'.join(remaining_lines)
                 if not remaining_code.strip():
@@ -3629,51 +3021,30 @@ while True:
                     continue
                 code = remaining_code
                 lines = remaining_lines
-
-            # ---------- Record history ----------
-            if code.strip():
-                _history_lines.append(code)
-
-            # Patch IPython again (if imported later)
+            if code.strip(): _history_lines.append(code)
             _patch_ipython_display()
-
-            # Autoreload
             if _autoreload_enabled:
                 for mod_name, mod in list(sys.modules.items()):
-                    if (mod_name not in sys.builtin_module_names and
-                        not mod_name.startswith('_') and
-                        mod_name not in ('jupy', 'jupy.core', 'jupy.core.kernel')):
-                        try:
-                            importlib.reload(mod)
-                        except:
-                            pass
-
-            # Enable debugger trace if breakpoints are set
-            if _breakpoints:
-                sys.settrace(_debugger_trace)
-
-            # ---------- Normal Python execution ----------
+                    if (mod_name not in sys.builtin_module_names and not mod_name.startswith('_') and mod_name not in ('jupy', 'jupy.core', 'jupy.core.kernel')):
+                        try: importlib.reload(mod)
+                        except: pass
+            if _breakpoints: sys.settrace(_debugger_trace)
             out, err = io.StringIO(), io.StringIO()
             try:
                 with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                     tree = ast.parse(code, mode="exec")
                     if tree.body and isinstance(tree.body[-1], ast.Expr):
                         last = tree.body.pop()
-                        if tree.body:
-                            exec(compile(tree, "<cell>", "exec"), namespace)
+                        if tree.body: exec(compile(tree, "<cell>", "exec"), namespace)
                         expr = ast.Expression(last.value)
                         ast.copy_location(expr, last.value)
                         val = eval(compile(expr, "<cell>", "eval"), namespace)
                         if val is not None:
                             if _float_precision is not None:
-                                if isinstance(val, float):
-                                    sys.stdout.write(format(val, f'.{_float_precision}f') + "\n")
-                                else:
-                                    sys.stdout.write(repr(val) + "\n")
-                            else:
-                                sys.stdout.write(repr(val) + "\n")
-                    else:
-                        exec(compile(code, "<cell>", "exec"), namespace)
+                                if isinstance(val, float): sys.stdout.write(format(val, f'.{_float_precision}f') + "\n")
+                                else: sys.stdout.write(repr(val) + "\n")
+                            else: sys.stdout.write(repr(val) + "\n")
+                    else: exec(compile(code, "<cell>", "exec"), namespace)
                     plots = _capture_plots()
                 stdout_val = out.getvalue()
                 stderr_val = err.getvalue()
@@ -3685,29 +3056,22 @@ while True:
                     sys.stdout.write(stderr_val)
                 if plots:
                     sys.stdout.write("---JUPY_PLOTS_START---\n")
-                    for p in plots:
-                        sys.stdout.write(p + "\n")
+                    for p in plots: sys.stdout.write(p + "\n")
                     sys.stdout.write("---JUPY_PLOTS_END---\n")
             except SyntaxError as e:
                 err_msg = "".join(traceback.format_exception_only(type(e), e))
-                if _xmode == 'Plain':
-                    err_msg = f"{type(e).__name__}: {e}"
-                elif _xmode == 'Context':
-                    err_msg = "".join(traceback.format_exception_only(type(e), e))
-                else:
-                    err_msg = "".join(traceback.format_exception_only(type(e), e))
+                if _xmode == 'Plain': err_msg = f"{type(e).__name__}: {e}"
+                elif _xmode == 'Context': err_msg = "".join(traceback.format_exception_only(type(e), e))
+                else: err_msg = "".join(traceback.format_exception_only(type(e), e))
                 sys.stdout.write(f"---JUPY_STDERR---\n{err_msg}\n")
             except Exception as e:
                 if _pdb_mode:
                     sys.stdout.write("---JUPY_STDERR---\n")
                     sys.stdout.write("pdb mode is ON, but post‑mortem debugging is not supported in headless kernel.\n")
                 tb = e.__traceback__.tb_next if e.__traceback__ else None
-                if _xmode == 'Plain':
-                    err_msg = f"{type(e).__name__}: {e}"
-                elif _xmode == 'Context':
-                    err_msg = "".join(traceback.format_exception(type(e), e, tb))
-                else:
-                    err_msg = "".join(traceback.format_exception(type(e), e, tb))
+                if _xmode == 'Plain': err_msg = f"{type(e).__name__}: {e}"
+                elif _xmode == 'Context': err_msg = "".join(traceback.format_exception(type(e), e, tb))
+                else: err_msg = "".join(traceback.format_exception(type(e), e, tb))
                 sys.stdout.write(f"---JUPY_STDERR---\n{err_msg}\n")
             sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
             sys.stdout.flush()
@@ -3770,8 +3134,8 @@ def get_kernel():
     if _kernel is None:
         print("[Jupy] Importing kernel for the first time...", flush=True)
         try:
-            from jupy.core.kernel import kernel
-            _kernel = kernel
+            from jupy.core.kernel.manager import KernelManager
+            _kernel = KernelManager()
             print("[Jupy] Kernel imported successfully.", flush=True)
         except Exception as e:
             print(f"[Jupy] ERROR importing kernel: {e}", flush=True)
@@ -3785,7 +3149,6 @@ def get_kernel_optional():
     if _kernel is not None:
         return _kernel
     return None
-
 
 class JupyHTTPHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -3932,7 +3295,8 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 message = data.get("message", "Update from Jupy")
                 try:
-                    subprocess.run(["git", "add", "."], cwd=os.getcwd(), check=True, capture_output=True, timeout=10)
+                    # FIX #10: Use 'git add -u' to only stage tracked files, avoiding accidental commits of .jupy_env etc.
+                    subprocess.run(["git", "add", "-u"], cwd=os.getcwd(), check=True, capture_output=True, timeout=10)
                     subprocess.run(["git", "commit", "-m", message], cwd=os.getcwd(), check=True, capture_output=True, timeout=10)
                     self._send_json({"success": True})
                 except subprocess.TimeoutExpired:
@@ -3991,6 +3355,7 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
 
             else:
                 self.send_error(404, "Endpoint not found")
+
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             return
         except Exception as e:
@@ -4219,6 +3584,7 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
             if opcode == 0x9:
                 self._ws_handle_ping(msg)
                 continue
+
             try:
                 req = json.loads(msg)
                 action = req.get("action")
@@ -4246,13 +3612,10 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
         env_info = kernel.env_info
         venv_dir = env_info["path"]
         venv_bin = env_info["bin"]
-
         env = os.environ.copy()
         env["VIRTUAL_ENV"] = venv_dir
         env["PATH"] = venv_bin + os.path.pathsep + env.get("PATH", "")
-
         shell = ["cmd.exe", "/K"] if sys.platform == "win32" else [env.get("SHELL", "/bin/bash"), "-i"]
-
         proc = subprocess.Popen(
             shell,
             stdin=subprocess.PIPE,
@@ -4315,7 +3678,6 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
         class NotebookFileHandler(watchdog.events.FileSystemEventHandler):
             def __init__(self, ws_send):
                 self.ws_send = ws_send
-
             def on_modified(self, event):
                 if not event.is_directory and event.src_path.endswith('.ipynb'):
                     self.ws_send({"type": "file_changed", "path": event.src_path})
@@ -5824,59 +5186,179 @@ body.presentation-mode .cell {
   background: var(--color-surface);
   color: var(--color-text);
 }
-
 /* ==========================================================================
-   MARKDOWN CELL (cell-md) – Colab‑like styling
+   MARKDOWN CELL (cell-md) – Colab‑like seamless styling
    ========================================================================== */
 .cell-md {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  padding-left: 0;
-  padding-right: 0;
-  margin-bottom: 2px;
-  border-radius: 0;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 12px 8px !important;
+  margin-bottom: 0 !important;
+  border-radius: 0 !important;
+  gap: 0 !important;
+  transition: background 0.2s ease, border-left 0.2s ease;
+  position: relative; /* For floating edit button */
+}
+
+/* Subtle hover state to indicate it's an editable block */
+.cell-md:not(.editing):hover {
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: var(--rounded-sm);
+}
+html[data-theme="dark"] .cell-md:not(.editing):hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Selected state (Colab style: subtle left border + tint) */
+.cell-md.selected:not(.editing) {
+  background: rgba(218, 161, 68, 0.08) !important; 
+  border-left: 3px solid var(--color-secondary) !important;
+  padding-left: 12px !important;
+  border-radius: 0 var(--rounded-sm) var(--rounded-sm) 0;
+}
+
+/* Hide gutters, drag handles, and output areas completely */
+.cell-md .cell-gutter,
+.cell-md .cell-drag-handle,
+.cell-md .cell-output {
+  display: none !important;
+}
+
+/* Editor host takes full width */
+.cell-md .cell-body {
+  padding: 0 !important;
 }
 
 .cell-md .cell-editor {
-  border: none;
-  background: transparent;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible !important;
 }
 
-.cell-md .cell-output {
-  border: none;
-  box-shadow: none;
-  background: transparent;
-  padding: 0 8px;
+/* EDITING STATE: Looks like a distinct card */
+.cell-md.editing {
+  background: var(--color-surface) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--rounded-sm) !important;
+  padding: 8px !important;
+  margin-bottom: 8px !important;
+  box-shadow: var(--shadow-brutal-sm) !important;
 }
 
-.cell-md.selected,
-.cell-md.editing,
-.cell-md.running {
-  border-top: none;
-  border-left: none;
-  background: transparent;
+.cell-md.editing .cell-editor {
+  border: 1px solid var(--color-bg-well) !important;
+  background: var(--color-bg-well) !important;
+  border-radius: var(--rounded-sm);
 }
 
+/* Toolbar hidden by default, appears on hover/edit */
 .cell-md .cell-toolbar {
-  opacity: 0.3;
-  margin-top: 4px;
+  opacity: 0;
+  margin-top: 0;
   flex-direction: row;
   gap: 8px;
+  transition: opacity 0.2s;
+}
+.cell-md:hover .cell-toolbar,
+.cell-md.editing .cell-toolbar {
+  opacity: 0.8;
 }
 
-.cell-md:hover .cell-toolbar,
-.cell-md.selected .cell-toolbar {
+/* Floating Edit Button (Colab style) */
+.md-edit-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s;
+  z-index: 10;
+  font-size: 0.8rem;
+  box-shadow: var(--shadow-brutal-sm);
+}
+.cell-md:not(.editing):hover .md-edit-btn {
   opacity: 1;
 }
+.md-edit-btn:hover {
+  background: var(--color-secondary);
+  color: #111827;
+}
 
-/* Make the editor look like a plain text area */
-.cell-md .CodeMirror {
-  background: transparent !important;
+/* Hide insert lines between markdown cells to maintain document flow */
+.cell-md + .insert-bar .insert-line,
+.insert-bar:has(+ .cell-md) .insert-line {
+  opacity: 0 !important;
+}
+.cell-md + .insert-bar:hover .insert-line,
+.insert-bar:has(+ .cell-md):hover .insert-line {
+  opacity: 1 !important;
+}
+
+/* ==========================================================================
+   MARKDOWN TYPOGRAPHY (Document Style)
+   ========================================================================== */
+.cell-md .markdown-preview {
+  padding: 0 !important;
   font-family: var(--font-body) !important;
-  font-size: 1rem !important;
+  font-size: 1.05rem !important;
+  line-height: 1.65 !important;
+  color: var(--color-text) !important;
+}
+.cell-md .markdown-preview h1 {
+  font-size: 2em; font-weight: 800; margin: 0.8em 0 0.4em;
+  padding-bottom: 0.3em; border-bottom: 1px solid var(--color-bg-well);
+}
+.cell-md .markdown-preview h2 {
+  font-size: 1.5em; font-weight: 800; margin: 0.8em 0 0.4em;
+  padding-bottom: 0.2em; border-bottom: 1px solid var(--color-bg-well);
+}
+.cell-md .markdown-preview h3 { font-size: 1.25em; font-weight: 700; margin: 0.6em 0 0.3em; }
+.cell-md .markdown-preview h4 { font-size: 1.1em; font-weight: 700; margin: 0.5em 0 0.2em; }
+.cell-md .markdown-preview p { margin: 0.6em 0; }
+.cell-md .markdown-preview ul, .cell-md .markdown-preview ol { padding-left: 1.5em; margin: 0.5em 0; }
+.cell-md .markdown-preview li { margin: 0.2em 0; }
+.cell-md .markdown-preview blockquote {
+  border-left: 4px solid var(--color-secondary);
+  padding: 0.5em 1em; margin: 0.8em 0;
+  background: var(--color-bg-well); color: var(--color-text); opacity: 0.9;
+}
+.cell-md .markdown-preview code {
+  background: var(--color-bg-well); padding: 0.2em 0.4em; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 0.9em;
+}
+.cell-md .markdown-preview pre {
+  background: var(--color-bg-well); padding: 1em; overflow-x: auto;
+  border-radius: var(--rounded-sm); border: 1px solid var(--color-border);
+}
+.cell-md .markdown-preview pre code { background: transparent; padding: 0; }
+.cell-md .markdown-preview table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+.cell-md .markdown-preview th, .cell-md .markdown-preview td {
+  border: 1px solid var(--color-border); padding: 8px 12px; text-align: left;
+}
+.cell-md .markdown-preview th { background: var(--color-bg-well); font-weight: 700; }
+.cell-md .markdown-preview img { max-width: 100%; border-radius: var(--rounded-sm); margin: 1em 0; }
+.cell-md .markdown-preview a { color: var(--color-primary); text-decoration: underline; }
+.cell-md .markdown-preview hr { border: none; border-top: 2px solid var(--color-bg-well); margin: 1.5em 0; }
+
+/* Make the CodeMirror editor blend in when editing */
+.cell-md.editing .CodeMirror {
+  background: transparent !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.95rem !important;
   line-height: 1.5 !important;
   color: var(--color-text) !important;
+  height: auto !important;
 }
 ```
 
@@ -7097,6 +6579,7 @@ import { initVariableExplorer } from './variableExplorer.js';
 import { initDebugger } from './debugger.js';
 import { initHyperparams } from './hyperparams.js';
 import { initTqdmIntegration } from './tqdmIntegration.js';
+import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
 
 (() => {
   // ===== DOM Elements =====
@@ -7109,7 +6592,6 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
   const themeToggleBtn = document.getElementById('btn-theme-toggle');
   const toastContainer = document.getElementById('toast-container');
   const envStatusLabel = document.getElementById('env-status-label');
-
   const terminalPanel = document.getElementById('terminal-panel');
   const terminalToggleBtn = document.getElementById('btn-terminal-toggle');
   const terminalCloseBtn = document.getElementById('btn-terminal-close');
@@ -7117,24 +6599,19 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
   const terminalOutput = document.getElementById('terminal-output');
   const terminalInput = document.getElementById('terminal-input');
   const terminalPromptLabel = document.getElementById('terminal-prompt-label');
-
   const runtimeMenu = document.getElementById('runtime-menu');
   const runtimeMenuTrigger = document.getElementById('runtime-menu-trigger');
   const runtimeMenuDropdown = document.getElementById('runtime-menu-dropdown');
-
   const envTopbarMenu = document.getElementById('env-topbar-menu');
   const envTopbarMenuTrigger = document.getElementById('env-topbar-menu-trigger');
   const envTopbarMenuDropdown = document.getElementById('env-topbar-menu-dropdown');
-
   const envPanel = document.getElementById('env-manager-panel');
   const envPanelTitle = document.getElementById('env-manager-title-text');
   const envCloseBtn = document.getElementById('btn-env-manager-close');
-
   const envViewCurrent = document.getElementById('env-view-current');
   const envViewCreate = document.getElementById('env-view-create');
   const envViewPip = document.getElementById('env-view-pip');
   const envViewOutline = document.getElementById('env-view-outline');
-
   const envModeRadios = Array.from(document.querySelectorAll('input[name="env-mode"]'));
   const envNamedSelect = document.getElementById('env-named-select');
   const envApplyBtn = document.getElementById('btn-env-apply');
@@ -7144,24 +6621,23 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
   const envPath = document.getElementById('env-path');
   const envPlatform = document.getElementById('env-platform');
   const envPackageCount = document.getElementById('env-package-count');
-
   const envCreateInput = document.getElementById('env-create-input');
   const envCreateBtn = document.getElementById('btn-env-create');
   const envCreateStatusLine = document.getElementById('env-create-status-line');
   const envExistingList = document.getElementById('env-existing-list');
-
   const pipManagerList = document.getElementById('pip-manager-list');
   const pipSearchInput = document.getElementById('pip-search-input');
   const pipInstallInput = document.getElementById('pip-install-input');
   const pipInstallBtn = document.getElementById('btn-pip-install');
   const pipStatusLine = document.getElementById('pip-status-line');
-
   const outlineListEl = document.getElementById('outline-list');
-
   const cellTemplate = document.getElementById('cell-template');
   const insertBarTemplate = document.getElementById('insert-bar-template');
 
   const showToast = createToaster(toastContainer);
+  
+  // FIX #5: Expose appendCellOutput globally so tqdmIntegration.js can wrap it
+  window.appendCellOutput = appendCellOutput;
 
   // ===== Theme & Metrics =====
   initTheme(themeToggleBtn);
@@ -7170,7 +6646,6 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
   // ===== Run Socket =====
   let notebook = null;
   let reconnectToastShown = false;
-
   const runSocket = new ReconnectingSocket('/ws/run', {
     onMessage: (data) => {
       if (data.type === 'widget') {
@@ -7191,6 +6666,10 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
       if (!reconnectToastShown) {
         showToast('⚠️ KERNEL CONNECTION LOST — RECONNECTING…', 'danger');
         reconnectToastShown = true;
+      }
+      // FIX #11: Clear queue and reset UI states when connection drops
+      if (notebook && typeof notebook.clearExecutionQueue === 'function') {
+        notebook.clearExecutionQueue();
       }
     },
   });
@@ -7215,7 +6694,6 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
     registerAutocomplete,
     onCellChange,
   });
-
   window.__jupy_notebook = notebook;
 
   // ===== Terminal =====
@@ -7269,6 +6747,7 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
     onResize: () => setTimeout(() => notebook.refreshAllEditors(), 50),
     onEnvSwitched: () => showToast('🔄 KERNEL RESTARTED ON NEW ENVIRONMENT', 'danger'),
   });
+
   envManager.refreshStatus();
 
   // ===== Dropdown Menus =====
@@ -7321,6 +6800,12 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
     try {
       const res = await fetch('/api/restart', { method: 'POST' });
       if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+      
+      // FIX #11: Clear any pending executions before wiping outputs
+      if (typeof this.clearExecutionQueue === 'function') {
+        this.clearExecutionQueue();
+      }
+
       this.getCells().forEach((c) => {
         c.execCount = null;
         c.dom.execCountEl.textContent = '[\u00A0]';
@@ -8455,7 +7940,6 @@ const IGNORED_KEYS = new Set([
   'Enter', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
   'Shift', 'Tab', 'Backspace', ' ',
 ]);
-
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 // Global tooltip element
@@ -8491,6 +7975,7 @@ function createTooltip() {
         hideTooltipTimer = null;
       }
     });
+
     hoverTooltip.addEventListener('mouseleave', () => {
       isHoveringTooltip = false;
       scheduleHideTooltip(300);
@@ -8545,7 +8030,6 @@ export function registerAutocomplete(cm, cellId) {
   let debounceTimer = null;
   let activeAbortController = null;
   let hoverTimer = null;
-
   const notebook = window.__jupy_notebook;
 
   function triggerHint(editor) {
@@ -8566,7 +8050,6 @@ export function registerAutocomplete(cm, cellId) {
   function fetchCompletions(editor, callback) {
     const cursor = editor.getCursor();
     const code = editor.getValue();
-
     if (activeAbortController) activeAbortController.abort();
     activeAbortController = new AbortController();
 
@@ -8583,15 +8066,12 @@ export function registerAutocomplete(cm, cellId) {
           callback(null);
           return;
         }
-
         const token = editor.getTokenAt(cursor);
         let start = token.start;
         const end = cursor.ch;
-
         if (token.string === '.' || !IDENTIFIER_RE.test(token.string)) {
           start = cursor.ch;
         }
-
         callback({
           list: list.map((item) => ({
             text: item.text,
@@ -8599,15 +8079,12 @@ export function registerAutocomplete(cm, cellId) {
             render: (element) => {
               const row = document.createElement('div');
               row.className = 'CodeMirror-hint-item';
-
               const nameSpan = document.createElement('span');
               nameSpan.className = 'hint-name';
               nameSpan.textContent = item.text;
-
               const badge = document.createElement('span');
               badge.className = 'hint-type';
               badge.textContent = (item.type || 'def').slice(0, 5);
-
               row.appendChild(nameSpan);
               row.appendChild(badge);
               element.appendChild(row);
@@ -8634,50 +8111,20 @@ export function registerAutocomplete(cm, cellId) {
       hideTooltip();
       return;
     }
-
     if (!notebook) {
       hideTooltip();
       return;
     }
 
-    // Find this cell's index
-    const cells = notebook.getCells();
-    let targetIndex = -1;
-    for (let i = 0; i < cells.length; i++) {
-      if (cells[i].id === cellId) {
-        targetIndex = i;
-        break;
-      }
-    }
-    if (targetIndex === -1) {
-      hideTooltip();
-      return;
-    }
-
-    // Build combined code and compute line offsets correctly
-    let allCode = '';
-    const lineOffsets = []; // number of lines before each cell
-    let currentLineCount = 0;
-    for (let i = 0; i < cells.length; i++) {
-      const cellCode = cells[i].cm.getValue();
-      const lines = cellCode.split('\n');
-      lineOffsets[i] = currentLineCount; // lines before this cell
-      allCode += cellCode;
-      currentLineCount += lines.length;
-      if (i < cells.length - 1) {
-        // Add two newlines – this creates one empty line between cells
-        allCode += '\n\n';
-        currentLineCount += 1; // the empty line
-      }
-    }
-
-    const absoluteLine = lineOffsets[targetIndex] + cursor.line + 1; // 1‑based
+    // FIX #7: Only send current cell code to avoid massive payload lag
+    const cellCode = editor.getValue();
+    const absoluteLine = cursor.line + 1; // 1-based relative to current cell
 
     // Debug logs (remove after verification)
-    console.log(`[Hover] cellId: ${cellId}, targetIndex: ${targetIndex}`);
+    console.log(`[Hover] cellId: ${cellId}`);
     console.log(`[Hover] cursor.line: ${cursor.line}, cursor.ch: ${cursor.ch}`);
-    console.log(`[Hover] lineOffsets[targetIndex]: ${lineOffsets[targetIndex]}, absoluteLine: ${absoluteLine}`);
-    console.log(`[Hover] combinedCode length: ${allCode.length}, first 200 chars:`, allCode.substring(0, 200));
+    console.log(`[Hover] absoluteLine: ${absoluteLine}`);
+    console.log(`[Hover] cellCode length: ${cellCode.length}, first 200 chars:`, cellCode.substring(0, 200));
 
     const pos = editor.cursorCoords(cursor, 'page');
     const tooltip = createTooltip();
@@ -8696,7 +8143,7 @@ export function registerAutocomplete(cm, cellId) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        code: allCode,
+        code: cellCode, // FIX: Send only current cell code
         line: absoluteLine,
         column: cursor.ch,
       }),
@@ -8706,15 +8153,12 @@ export function registerAutocomplete(cm, cellId) {
         const info = data.hover;
         console.log('[Hover] Server response:', info);
         if (!info) {
-          // If Jedi couldn't find it, try a fallback: get the definition using goto
-          // but we'll just show a more helpful message.
           tooltip.innerHTML = '<div style="opacity:0.7;">No documentation available</div>';
           clampTooltip(tooltip);
           return;
         }
 
         let html = '';
-
         // Header: name + type badge
         html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">`;
         html += `<span style="font-weight:800; font-size:0.9rem; color:var(--color-primary);">${info.name}</span>`;
@@ -8759,6 +8203,7 @@ export function registerAutocomplete(cm, cellId) {
   }
 
   const wrapper = cm.getWrapperElement();
+
   wrapper.addEventListener('mouseover', (event) => {
     const target = event.target.closest('.CodeMirror');
     if (!target) return;
@@ -8778,6 +8223,7 @@ export function registerAutocomplete(cm, cellId) {
   cm.on('scroll', () => {
     if (!isHoveringTooltip) hideTooltip();
   });
+
   cm.on('cursorActivity', () => {
     if (!isHoveringTooltip) hideTooltip();
   });
@@ -8802,10 +8248,8 @@ export function registerAutocomplete(cm, cellId) {
       }
       return;
     }
-
     const cursor = editor.getCursor();
     const token = editor.getTokenAt(cursor);
-
     if (token.type === 'comment' || token.type === 'string') {
       if (debounceTimer) {
         clearTimeout(debounceTimer);
@@ -8851,18 +8295,29 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
   const outputEl = frag.querySelector('.cell-output');
   const toolbar = frag.querySelector('.cell-toolbar');
 
-  // ---------- Markdown styling ----------
+    // ---------- Markdown styling ----------
   if (type === 'markdown') {
     root.classList.add('cell-md');
+    root.style.position = 'relative'; // Needed for absolute edit button
+
+    // Add Colab-style floating edit button
+    const editBtn = document.createElement('button');
+    editBtn.className = 'md-edit-btn';
+    editBtn.innerHTML = '✏️';
+    editBtn.title = 'Edit markdown';
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setMarkdownEdit(cell);
+    });
+    root.appendChild(editBtn);
+
     // Hide the gutter (run button + execution count) entirely
     const gutter = frag.querySelector('.cell-gutter');
     if (gutter) gutter.style.display = 'none';
-    // Optionally hide the drag handle for a cleaner look
+    
+    // Hide drag handle
     const dragHandle = frag.querySelector('.cell-drag-handle');
     if (dragHandle) dragHandle.style.display = 'none';
-    // Make the toolbar always visible but less intrusive
-    toolbar.style.opacity = '0.5';
-    toolbar.style.marginTop = '4px';
   }
 
   const dragHandleEl = frag.querySelector('.cell-drag-handle');
@@ -8905,25 +8360,48 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
     tabSize: 4,
     indentWithTabs: false,
     autoCloseBrackets: true,
-    extraKeys: {
+        extraKeys: {
       'Shift-Enter': (editor) => {
-        hooks.onRun(cell.id, { advance: true });
+        if (cell.type === 'markdown') {
+          renderMarkdown(cell);
+          hooks.onExitEdit(cell.id);
+          hooks.onRun(cell.id, { advance: true }); // Advance to next cell
+        } else {
+          hooks.onRun(cell.id, { advance: true });
+        }
       },
       'Ctrl-Enter': (editor) => {
-        if (editor.state.completionActive) editor.state.completionActive.close();
-        hooks.onRun(cell.id, { advance: false });
+        if (cell.type === 'markdown') {
+          renderMarkdown(cell);
+          hooks.onExitEdit(cell.id);
+        } else {
+          if (editor.state.completionActive) editor.state.completionActive.close();
+          hooks.onRun(cell.id, { advance: false });
+        }
       },
       'Cmd-Enter': (editor) => {
-        if (editor.state.completionActive) editor.state.completionActive.close();
-        hooks.onRun(cell.id, { advance: false });
+        if (cell.type === 'markdown') {
+          renderMarkdown(cell);
+          hooks.onExitEdit(cell.id);
+        } else {
+          if (editor.state.completionActive) editor.state.completionActive.close();
+          hooks.onRun(cell.id, { advance: false });
+        }
       },
       'Alt-Enter': (editor) => {
-        if (editor.state.completionActive) editor.state.completionActive.close();
-        hooks.onRun(cell.id, { insertBelow: true });
+        if (cell.type === 'markdown') {
+          renderMarkdown(cell);
+          hooks.onExitEdit(cell.id);
+          hooks.onRun(cell.id, { insertBelow: true });
+        } else {
+          if (editor.state.completionActive) editor.state.completionActive.close();
+          hooks.onRun(cell.id, { insertBelow: true });
+        }
       },
       'Esc': () => {
-        if (cell.type === 'markdown' && cell.isPreview) {
-          setMarkdownEdit(cell);
+        if (cell.type === 'markdown' && !cell.isPreview) {
+          renderMarkdown(cell);
+          hooks.onExitEdit(cell.id);
         } else {
           hooks.onExitEdit(cell.id);
         }
@@ -8970,6 +8448,19 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
   });
 
   cm.on('focus', () => hooks.onEnterEdit(cell.id));
+
+  // Auto-render markdown when clicking outside
+  cm.on('blur', () => {
+    if (cell.type === 'markdown' && !cell.isPreview) {
+      setTimeout(() => {
+        // Check if focus moved outside the editor and toolbar
+        if (!cm.hasFocus() && !root.contains(document.activeElement)) {
+          renderMarkdown(cell);
+          hooks.onExitEdit(cell.id);
+        }
+      }, 150); // Small delay to allow clicking toolbar buttons
+    }
+  });
 
   // ---- CLICK TO SELECT ----
   root.addEventListener('click', (e) => {
@@ -9618,18 +9109,15 @@ export function setupEnvManager({
 
   function renderPackages() {
     const query = searchInput.value.trim().toLowerCase();
-
     if (!packages.length) {
       listEl.innerHTML = `<div class="pip-manager-empty">${loaded ? 'No packages installed.' : 'Loading packages…'}</div>`;
       return;
     }
-
     const filtered = query ? packages.filter((p) => p.name.toLowerCase().includes(query)) : packages;
     if (!filtered.length) {
       listEl.innerHTML = `<div class="pip-manager-empty">No packages match “${escapeHtml(searchInput.value.trim())}”.</div>`;
       return;
     }
-
     listEl.innerHTML = '';
     filtered.forEach((pkg) => {
       const row = document.createElement('div');
@@ -9645,7 +9133,6 @@ export function setupEnvManager({
   }
 
   // --- Outline ---
-
   function renderOutline() {
     if (!notebook) return;
     const cells = notebook.getCells();
@@ -9670,7 +9157,6 @@ export function setupEnvManager({
       outlineListEl.innerHTML = '<div class="pip-manager-empty">No functions or classes found.</div>';
       return;
     }
-
     outlineListEl.innerHTML = '';
     items.forEach((item) => {
       const div = document.createElement('div');
@@ -9719,8 +9205,6 @@ export function setupEnvManager({
       cell.cm.on('change', handler);
       cellChangeListeners.push(() => cell.cm.off('change', handler));
     });
-    // Also listen for when cells are added/deleted/moved (patch methods)
-    // We'll rely on the notebook's callbacks for that.
   }
 
   function stopOutlineListening() {
@@ -9728,12 +9212,7 @@ export function setupEnvManager({
     cellChangeListeners = [];
   }
 
-  // We'll also need to listen to cell insertion/deletion via notebook's public methods.
-  // For that, we can monkey-patch the notebook insert/delete methods in the controller
-  // to call scheduleOutlineUpdate (already done in app.js).
-
   // --- API calls ---
-
   async function refreshEnvInfo() {
     try {
       const res = await fetch('/api/env/list');
@@ -9771,7 +9250,6 @@ export function setupEnvManager({
     if (busy) return;
     const mode = modeRadios.find((r) => r.checked)?.value || 'global';
     const name = mode === 'named' ? namedSelect.value : undefined;
-
     setBusy(true, '⏳ Switching environment (first use may take a moment)…', statusLine);
     try {
       const res = await fetch('/api/env/select', {
@@ -9785,6 +9263,12 @@ export function setupEnvManager({
         await refreshEnvInfo();
         loaded = false;
         await refreshPackages();
+        
+        // FIX #6: Actually restart the kernel so the new environment takes effect
+        if (notebook && typeof notebook.restartKernel === 'function') {
+          await notebook.restartKernel();
+        }
+        
         onEnvSwitched?.();
       } else {
         showToast('⚠️ FAILED TO SWITCH ENVIRONMENT', 'danger');
@@ -9802,7 +9286,6 @@ export function setupEnvManager({
   async function createEnv() {
     const name = createInput.value.trim();
     if (!name || busy) return;
-
     setBusy(true, `⏳ Creating "${name}"…`, createStatusLine);
     try {
       const res = await fetch('/api/env/create', {
@@ -9835,7 +9318,6 @@ export function setupEnvManager({
   async function install() {
     const spec = installInput.value.trim();
     if (!spec || busy) return;
-
     setBusy(true, `⏳ Installing ${spec}…`, pipStatusLine);
     try {
       const res = await fetch('/api/pip/install', {
@@ -9847,7 +9329,6 @@ export function setupEnvManager({
       packages = data.packages || packages;
       loaded = true;
       renderPackages();
-
       if (data.success) {
         showToast(`📦 INSTALLED ${spec.toUpperCase()}`, 'success');
         installInput.value = '';
@@ -9867,7 +9348,6 @@ export function setupEnvManager({
   async function uninstall(name) {
     if (busy) return;
     setBusy(true, `⏳ Removing ${name}…`, pipStatusLine);
-
     try {
       const res = await fetch('/api/pip/uninstall', {
         method: 'POST',
@@ -9878,7 +9358,6 @@ export function setupEnvManager({
       packages = data.packages || packages;
       loaded = true;
       renderPackages();
-
       if (data.success) {
         showToast(`🗑️ REMOVED ${name.toUpperCase()}`, 'warning');
         await refreshEnvInfo();
@@ -9895,7 +9374,6 @@ export function setupEnvManager({
   }
 
   // --- View management ---
-
   function showView(view) {
     Object.entries(views).forEach(([key, el]) => {
       if (el) el.hidden = key !== view;
@@ -9914,18 +9392,15 @@ export function setupEnvManager({
 
   function openView(view) {
     if (!views[view]) return;
-
     if (!panel.hidden && activeView === view) {
       close();
       return;
     }
-
     showView(view);
     panel.hidden = false;
     refreshEnvInfo();
     if (view === 'pip' && !loaded) refreshPackages();
     if (onResize) onResize();
-
     if (view === 'pip') setTimeout(() => searchInput.focus(), 50);
     else if (view === 'create') setTimeout(() => createInput.focus(), 50);
   }
@@ -10229,6 +9704,7 @@ export function createNotebookController({
   }
 
   // ===== Public API =====
+    // ===== Public API =====
   return {
     insertCellAt: operations.insertCellAt,
     deleteCell: operations.deleteCell,
@@ -10265,6 +9741,7 @@ export function createNotebookController({
     togglePresentation: presentation.toggle,
     setStatus,
     executeNextInQueue: execution.executeNextInQueue,
+    clearExecutionQueue: execution.clearExecutionQueue, // FIX #11: Added this line
   };
 }
 ```
@@ -10281,35 +9758,41 @@ export function createNotebookController({
  */
 export function createDnD(container, state, operations, selection) {
   function handleDragOver(e) { e.preventDefault(); }
+
   function handleDrop(e) {
     e.preventDefault();
     const draggedId = e.dataTransfer.getData('text/plain');
     if (!draggedId) return;
+
     const target = document.elementFromPoint(e.clientX, e.clientY);
     const cellEl = target.closest('.cell');
     if (!cellEl) return;
+
     const targetId = cellEl.dataset.cellId;
     if (!targetId || draggedId === targetId) return;
+
     const fromIdx = state.indexOf(draggedId);
     const toIdx = state.indexOf(targetId);
     if (fromIdx === -1 || toIdx === -1) return;
+
     const [cell] = state.cells.splice(fromIdx, 1);
     state.cells.splice(toIdx, 0, cell);
-    // reorder DOM
-    // We need to reorder the DOM manually or call a function
-    // Since we don't have reorderDom here, we'll do it manually:
-    container.innerHTML = '';
+
+    // FIX #8: Reorder DOM without destroying CodeMirror instances
+    // Re-appending existing nodes just moves them in the DOM tree
     state.cells.forEach(c => {
       container.appendChild(c.dom.root);
       container.appendChild(c.dom.insertBar);
     });
+
     selection.selectCell(cell.id);
   }
+
   container.addEventListener('dragover', handleDragOver);
   container.addEventListener('drop', handleDrop);
+
   return { handleDragOver, handleDrop };
 }
-
 ```
 
 
@@ -10324,7 +9807,7 @@ export function createDnD(container, state, operations, selection) {
  */
 import {
   clearCellOutput,
-  appendCellOutput,
+  appendCellOutput as _appendCellOutput,
   appendCellPlot,
   appendCellStdinPrompt,
   appendDisplayData,
@@ -10336,7 +9819,6 @@ function renderMarkdownOutput(cell) {
   const src = cell.cm.getValue();
   clearCellOutput(cell);
   if (!src.trim()) return;
-
   let html = window.marked ? window.marked.parse(src) : `<pre>${src}</pre>`;
   const div = document.createElement('div');
   div.className = 'markdown-preview';
@@ -10384,6 +9866,7 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
     cell.dom.runBtn.title = 'Interrupt Execution';
     cell.dom.execCountEl.textContent = '[*]';
     clearCellOutput(cell);
+
     const language = cell.language || 'python';
     console.log('[Jupy] Executing cell', id, 'language:', language);
     runSocket.send({
@@ -10437,12 +9920,15 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
       showToast('⚠️ NOT CONNECTED TO KERNEL — RECONNECTING…', 'danger');
       return;
     }
+
     const idx = indexOf(id);
+
     if (state.runningCellId === id) {
       showToast('⚠️ CELL ALREADY RUNNING', 'warning');
       if (advance) advanceSelectionAfter(idx);
       return;
     }
+
     if (state.runningCellId !== null) {
       // Queue the cell
       if (!executionQueue.includes(id)) {
@@ -10458,8 +9944,10 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
       if (advance) advanceSelectionAfter(idx);
       return;
     }
+
     // Run now
     executeNextInQueue(id);
+
     if (insertBelow) {
       if (!operations) {
         console.error('[Jupy] insertBelow: operations is null!');
@@ -10486,10 +9974,13 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
       return;
     }
 
+    // FIX #5: Use wrapped append function if tqdmIntegration has patched it
+    const appendFn = window.appendCellOutput || _appendCellOutput;
+
     if (data.type === 'stdout') {
-      appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stdout');
+      appendFn(cell, data.text.replace(/\n$/, ''), 'stdout');
     } else if (data.type === 'stderr') {
-      appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stderr');
+      appendFn(cell, data.text.replace(/\n$/, ''), 'stderr');
     } else if (data.type === 'plot') {
       appendCellPlot(cell, data.html);
     } else if (data.type === 'display') {
@@ -10524,12 +10015,42 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
     [...cells].forEach((cell) => runCell(cell.id, { advance: false }));
   }
 
+  function clearExecutionQueue() {
+    if (executionQueue.length > 0) {
+      executionQueue.forEach(id => {
+        const cell = getCell(id);
+        if (cell) {
+          cell.dom.root.classList.remove('queued', 'running');
+          cell.dom.runBtn.textContent = '▶';
+          cell.dom.runBtn.title = 'Run cell (Shift+Enter)';
+          cell.dom.execCountEl.textContent = '[ ]';
+        }
+      });
+      executionQueue.length = 0;
+    }
+    if (state.runningCellId) {
+      const runningCell = getCell(state.runningCellId);
+      if (runningCell) {
+        runningCell.dom.root.classList.remove('running', 'queued');
+        runningCell.dom.runBtn.textContent = '▶';
+        runningCell.dom.runBtn.title = 'Run cell (Shift+Enter)';
+        // Don't reset execCount if it already finished, but reset if it was interrupted/dropped
+        if (runningCell.dom.execCountEl.textContent === '[*]') {
+          runningCell.dom.execCountEl.textContent = '[ ]';
+        }
+      }
+      state.runningCellId = null;
+      setStatus('idle');
+    }
+  }
+
   return {
     runCell,
     handleRunMessage,
     runAll,
     executeNextInQueue,
     advanceSelectionAfter,
+    clearExecutionQueue, // Exposed for controller
   };
 }
 ```
@@ -11365,274 +10886,6 @@ export function renderRichOutput(container, mimeData, options = {}) {
 
 ---
 
-# File: static\js\runtime\aboutDialog.js
-
-```js
-/**
- * runtime/aboutDialog.js
- * "About Jupyvenv" modal — fetches GET /api/about (server/handlers.py) and
- * fills in the Jupy version, .jupy_env Python version, venv path,
- * platform, and installed package count.
- */
-export function setupAboutDialog({ overlay, closeBtn }) {
-  const fields = {
-    jupyVersion: document.getElementById('about-jupy-version'),
-    pythonVersion: document.getElementById('about-python-version'),
-    venvDir: document.getElementById('about-venv-dir'),
-    platform: document.getElementById('about-platform'),
-    packageCount: document.getElementById('about-package-count'),
-  };
-
-  function setAll(text) {
-    Object.values(fields).forEach((el) => {
-      if (el) el.textContent = text;
-    });
-  }
-
-  async function open() {
-    overlay.hidden = false;
-    setAll('…');
-    try {
-      const res = await fetch('/api/about');
-      if (!res.ok) throw new Error(`Server responded with ${res.status}`);
-      const data = await res.json();
-      if (fields.jupyVersion) fields.jupyVersion.textContent = data.jupy_version ?? '—';
-      if (fields.pythonVersion) fields.pythonVersion.textContent = data.python_version ?? '—';
-      if (fields.venvDir) fields.venvDir.textContent = data.venv_dir ?? '—';
-      if (fields.platform) fields.platform.textContent = data.platform ?? '—';
-      if (fields.packageCount) fields.packageCount.textContent = data.package_count ?? '—';
-    } catch (err) {
-      console.error('Failed to load /api/about:', err);
-      setAll('⚠️ error');
-    }
-  }
-
-  function close() {
-    overlay.hidden = true;
-  }
-
-  closeBtn.addEventListener('click', close);
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) close();
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !overlay.hidden) close();
-  });
-
-  return { open, close };
-}
-
-```
-
-
----
-
-# File: static\js\runtime\pyodideRuntime.js
-
-```js
-/**
- * runtime/pyodideRuntime.js
- * Client-side (in-browser) Python execution via Pyodide — supports
- * `!pip install` and captures Matplotlib plots as inline <img> output.
- *
- * FLAG FOR REVIEW: this module isn't imported anywhere, and it wasn't wired
- * into the old static/js/notebook.js either — live cell execution goes
- * through the backend kernel over the `/ws/run` WebSocket instead (see
- * notebook/notebookController.js#runCell). It's migrated here unchanged so
- * nothing is silently dropped, but as far as this codebase shows, it's dead
- * code from an earlier or alternate (offline/serverless) execution path.
- * Worth a decision: wire it up as a fallback/offline mode, or delete it.
- */
-const PYODIDE_VERSION = 'v0.26.4';
-const PYODIDE_CDN = `https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/`;
-
-let pyodide = null;
-let loadingPromise = null;
-let runCellFn = null;
-let namespace = null;
-
-const BOOTSTRAP_PY = `
-import ast, io, re, sys, traceback, warnings
-from contextlib import redirect_stdout, redirect_stderr
-
-warnings.filterwarnings("ignore", message=".*non-GUI backend.*")
-warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
-
-async def __pynb_pip_install__(pkg_str):
-    import micropip
-    tokens = pkg_str.split()
-    pkgs = [t for t in tokens if not t.startswith('-')]
-    if not pkgs:
-        print("Usage: !pip install <package_name>")
-        return
-    
-    print(f"Installing {', '.join(pkgs)} via micropip...")
-    try:
-        await micropip.install(pkgs)
-        print(f"Successfully installed {', '.join(pkgs)}")
-    except Exception as e:
-        print(f"Failed to install {', '.join(pkgs)}: {e}", file=sys.stderr)
-
-def __pynb_capture_plots__():
-    plot_htmls = []
-    if "matplotlib.pyplot" in sys.modules:
-        import matplotlib
-        import matplotlib.pyplot as plt
-        import io, base64
-        
-        fignums = plt.get_fignums()
-        for i in fignums:
-            try:
-                fig = plt.figure(i)
-                buf = io.BytesIO()
-                fig.savefig(buf, format="png", bbox_inches="tight", dpi=110)
-                buf.seek(0)
-                b64 = base64.b64encode(buf.read()).decode("ascii")
-                plot_htmls.append(f'<img class="notebook-plot" src="data:image/png;base64,{b64}" alt="Plot" />')
-            except Exception:
-                pass
-        
-        try:
-            plt.close("all")
-        except Exception:
-            pass
-            
-        try:
-            from matplotlib._pylab_helpers import Gcf
-            Gcf.figs.clear()
-        except Exception:
-            pass
-
-    return plot_htmls
-
-async def __pynb_run_cell__(code, ns):
-    out, err = io.StringIO(), io.StringIO()
-    result_repr, error_tb = None, None
-    plots = []
-    
-    lines = code.splitlines()
-    pip_cmds = []
-    py_lines = []
-    
-    for line in lines:
-        stripped = line.strip()
-        if re.match(r'^[!%]?\\s*pip\\s+install\\s+', stripped):
-            clean_cmd = re.sub(r'^[!%]?\\s*pip\\s+install\\s+', '', stripped)
-            pip_cmds.append(clean_cmd)
-        elif re.match(r'^[!%]?\\s*matplotlib\\s+inline', stripped):
-            pass
-        else:
-            py_lines.append(line)
-            
-    clean_code = "\\n".join(py_lines)
-    
-    try:
-        with redirect_stdout(out), redirect_stderr(err):
-            for cmd in pip_cmds:
-                await __pynb_pip_install__(cmd)
-            
-            if "matplotlib" in sys.modules:
-                import matplotlib
-                try:
-                    matplotlib.use("Agg", force=True)
-                except Exception:
-                    pass
-            
-            if clean_code.strip():
-                tree = ast.parse(clean_code, mode="exec")
-                if tree.body and isinstance(tree.body[-1], ast.Expr):
-                    last = tree.body.pop()
-                    if tree.body:
-                        exec(compile(tree, "<cell>", "exec"), ns)
-                    expr = ast.Expression(last.value)
-                    ast.copy_location(expr, last.value)
-                    value = eval(compile(expr, "<cell>", "eval"), ns)
-                    if value is not None:
-                        result_repr = repr(value)
-                else:
-                    exec(compile(tree, "<cell>", "exec"), ns)
-            
-            plots = __pynb_capture_plots__()
-
-    except SyntaxError as e:
-        error_tb = "".join(traceback.format_exception_only(type(e), e))
-    except Exception as e:
-        tb = e.__traceback__.tb_next if e.__traceback__ else None
-        error_tb = "".join(traceback.format_exception(type(e), e, tb))
-        
-    return out.getvalue(), err.getvalue(), result_repr, error_tb, plots
-`;
-
-function freshNamespace() {
-  return pyodide.runPython("{'__name__': '__main__'}");
-}
-
-async function init(onProgress) {
-  if (pyodide) return pyodide;
-  if (loadingPromise) return loadingPromise;
-
-  loadingPromise = (async () => {
-    onProgress?.('Fetching Python runtime…');
-    const { loadPyodide } = await import(PYODIDE_CDN + 'pyodide.mjs');
-    pyodide = await loadPyodide({ indexURL: PYODIDE_CDN });
-
-    onProgress?.('Loading package installer (micropip)…');
-    await pyodide.loadPackage('micropip');
-
-    onProgress?.('Initializing kernel…');
-    pyodide.runPython(BOOTSTRAP_PY);
-    runCellFn = pyodide.globals.get('__pynb_run_cell__');
-    namespace = freshNamespace();
-
-    onProgress?.('Ready');
-    return pyodide;
-  })();
-
-  return loadingPromise;
-}
-
-async function run(code) {
-  if (!pyodide || !runCellFn) throw new Error('PyRuntime not ready');
-  const proxy = await runCellFn(code, namespace);
-  const [stdout, stderr, result, error, plots] = proxy.toJs();
-  proxy.destroy();
-  return { stdout, stderr, result, error, plots };
-}
-
-function restart() {
-  if (namespace && namespace.destroy) {
-    try { namespace.destroy(); } catch { /* already gone */ }
-  }
-  namespace = freshNamespace();
-}
-
-/** Loads (once) and returns the Pyodide instance, reporting progress via onProgress. */
-export const getPyodide = (onProgress) => init(onProgress);
-
-/**
- * @param {*} instance - unused; kept for call-signature parity with the backend run path
- * @param {string} code
- * @param {{onStdout?: (text: string) => void, onStderr?: (text: string) => void, onPlot?: (html: string) => void}} [callbacks]
- */
-export async function runCell(instance, code, { onStdout, onStderr, onPlot } = {}) {
-  const { stdout, stderr, result, error, plots } = await run(code);
-  if (stdout) onStdout?.(stdout.replace(/\n$/, ''));
-  if (result != null) onStdout?.(result);
-  if (plots && plots.length > 0) {
-    plots.forEach((html) => onPlot?.(html));
-  }
-  if (stderr) onStderr?.(stderr.replace(/\n$/, ''));
-  if (error) onStderr?.(error.replace(/\n$/, ''));
-}
-
-export const restartKernel = async () => restart();
-export const isReady = () => !!pyodide;
-
-```
-
-
----
-
 # File: static\js\runtime\runtimeMenu.js
 
 ```js
@@ -12130,13 +11383,6 @@ function injectDialogDOM() {
 /**
  * terminal/terminal.js
  * The right-hand split-pane shell terminal.
- *
- * BUG FIX: previously used a bare WebSocket with no reconnect and no close
- * handling at all — if the connection dropped (server restart, network blip),
- * the terminal went silently dead with no way to recover short of a full page
- * reload. It's now backed by the shared ReconnectingSocket, and output is
- * capped to avoid unbounded memory growth over long sessions (mirroring the
- * cap already applied to cell output).
  */
 import { ReconnectingSocket } from '../core/socket.js';
 import { MAX_TERMINAL_OUTPUT_CHARS } from '../config/constants.js';
@@ -12155,8 +11401,7 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, output, input,
   }
 
   function ensureSocket() {
-    if (termSocket) return; // ReconnectingSocket already owns its own reconnect loop
-
+    if (termSocket) return;
     output.textContent = 'Jupy Terminal (.jupy_env) Ready.\n';
     termSocket = new ReconnectingSocket('/ws/terminal', {
       onMessage: (data) => {
@@ -12195,11 +11440,11 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, output, input,
         cmdHistory.push(val);
         historyIdx = cmdHistory.length;
       }
-
       const currentPrompt = promptLabel ? promptLabel.textContent : '(jupy_venv) ❯';
       appendOutput(`${currentPrompt} ${val}\n`);
-
-      termSocket.send({ type: 'command', cmd: val });
+      
+      // FIX: Backend expects { type: 'input', data: val }
+      termSocket.send({ type: 'input', data: val + '\n' });
       input.value = '';
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();

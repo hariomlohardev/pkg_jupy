@@ -9,7 +9,6 @@ const IGNORED_KEYS = new Set([
   'Enter', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
   'Shift', 'Tab', 'Backspace', ' ',
 ]);
-
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 // Global tooltip element
@@ -45,6 +44,7 @@ function createTooltip() {
         hideTooltipTimer = null;
       }
     });
+
     hoverTooltip.addEventListener('mouseleave', () => {
       isHoveringTooltip = false;
       scheduleHideTooltip(300);
@@ -99,7 +99,6 @@ export function registerAutocomplete(cm, cellId) {
   let debounceTimer = null;
   let activeAbortController = null;
   let hoverTimer = null;
-
   const notebook = window.__jupy_notebook;
 
   function triggerHint(editor) {
@@ -120,7 +119,6 @@ export function registerAutocomplete(cm, cellId) {
   function fetchCompletions(editor, callback) {
     const cursor = editor.getCursor();
     const code = editor.getValue();
-
     if (activeAbortController) activeAbortController.abort();
     activeAbortController = new AbortController();
 
@@ -137,15 +135,12 @@ export function registerAutocomplete(cm, cellId) {
           callback(null);
           return;
         }
-
         const token = editor.getTokenAt(cursor);
         let start = token.start;
         const end = cursor.ch;
-
         if (token.string === '.' || !IDENTIFIER_RE.test(token.string)) {
           start = cursor.ch;
         }
-
         callback({
           list: list.map((item) => ({
             text: item.text,
@@ -153,15 +148,12 @@ export function registerAutocomplete(cm, cellId) {
             render: (element) => {
               const row = document.createElement('div');
               row.className = 'CodeMirror-hint-item';
-
               const nameSpan = document.createElement('span');
               nameSpan.className = 'hint-name';
               nameSpan.textContent = item.text;
-
               const badge = document.createElement('span');
               badge.className = 'hint-type';
               badge.textContent = (item.type || 'def').slice(0, 5);
-
               row.appendChild(nameSpan);
               row.appendChild(badge);
               element.appendChild(row);
@@ -188,50 +180,20 @@ export function registerAutocomplete(cm, cellId) {
       hideTooltip();
       return;
     }
-
     if (!notebook) {
       hideTooltip();
       return;
     }
 
-    // Find this cell's index
-    const cells = notebook.getCells();
-    let targetIndex = -1;
-    for (let i = 0; i < cells.length; i++) {
-      if (cells[i].id === cellId) {
-        targetIndex = i;
-        break;
-      }
-    }
-    if (targetIndex === -1) {
-      hideTooltip();
-      return;
-    }
-
-    // Build combined code and compute line offsets correctly
-    let allCode = '';
-    const lineOffsets = []; // number of lines before each cell
-    let currentLineCount = 0;
-    for (let i = 0; i < cells.length; i++) {
-      const cellCode = cells[i].cm.getValue();
-      const lines = cellCode.split('\n');
-      lineOffsets[i] = currentLineCount; // lines before this cell
-      allCode += cellCode;
-      currentLineCount += lines.length;
-      if (i < cells.length - 1) {
-        // Add two newlines – this creates one empty line between cells
-        allCode += '\n\n';
-        currentLineCount += 1; // the empty line
-      }
-    }
-
-    const absoluteLine = lineOffsets[targetIndex] + cursor.line + 1; // 1‑based
+    // FIX #7: Only send current cell code to avoid massive payload lag
+    const cellCode = editor.getValue();
+    const absoluteLine = cursor.line + 1; // 1-based relative to current cell
 
     // Debug logs (remove after verification)
-    console.log(`[Hover] cellId: ${cellId}, targetIndex: ${targetIndex}`);
+    console.log(`[Hover] cellId: ${cellId}`);
     console.log(`[Hover] cursor.line: ${cursor.line}, cursor.ch: ${cursor.ch}`);
-    console.log(`[Hover] lineOffsets[targetIndex]: ${lineOffsets[targetIndex]}, absoluteLine: ${absoluteLine}`);
-    console.log(`[Hover] combinedCode length: ${allCode.length}, first 200 chars:`, allCode.substring(0, 200));
+    console.log(`[Hover] absoluteLine: ${absoluteLine}`);
+    console.log(`[Hover] cellCode length: ${cellCode.length}, first 200 chars:`, cellCode.substring(0, 200));
 
     const pos = editor.cursorCoords(cursor, 'page');
     const tooltip = createTooltip();
@@ -250,7 +212,7 @@ export function registerAutocomplete(cm, cellId) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        code: allCode,
+        code: cellCode, // FIX: Send only current cell code
         line: absoluteLine,
         column: cursor.ch,
       }),
@@ -260,15 +222,12 @@ export function registerAutocomplete(cm, cellId) {
         const info = data.hover;
         console.log('[Hover] Server response:', info);
         if (!info) {
-          // If Jedi couldn't find it, try a fallback: get the definition using goto
-          // but we'll just show a more helpful message.
           tooltip.innerHTML = '<div style="opacity:0.7;">No documentation available</div>';
           clampTooltip(tooltip);
           return;
         }
 
         let html = '';
-
         // Header: name + type badge
         html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">`;
         html += `<span style="font-weight:800; font-size:0.9rem; color:var(--color-primary);">${info.name}</span>`;
@@ -313,6 +272,7 @@ export function registerAutocomplete(cm, cellId) {
   }
 
   const wrapper = cm.getWrapperElement();
+
   wrapper.addEventListener('mouseover', (event) => {
     const target = event.target.closest('.CodeMirror');
     if (!target) return;
@@ -332,6 +292,7 @@ export function registerAutocomplete(cm, cellId) {
   cm.on('scroll', () => {
     if (!isHoveringTooltip) hideTooltip();
   });
+
   cm.on('cursorActivity', () => {
     if (!isHoveringTooltip) hideTooltip();
   });
@@ -356,10 +317,8 @@ export function registerAutocomplete(cm, cellId) {
       }
       return;
     }
-
     const cursor = editor.getCursor();
     const token = editor.getTokenAt(cursor);
-
     if (token.type === 'comment' || token.type === 'string') {
       if (debounceTimer) {
         clearTimeout(debounceTimer);

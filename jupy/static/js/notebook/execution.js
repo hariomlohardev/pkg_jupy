@@ -4,7 +4,7 @@
  */
 import {
   clearCellOutput,
-  appendCellOutput,
+  appendCellOutput as _appendCellOutput,
   appendCellPlot,
   appendCellStdinPrompt,
   appendDisplayData,
@@ -16,7 +16,6 @@ function renderMarkdownOutput(cell) {
   const src = cell.cm.getValue();
   clearCellOutput(cell);
   if (!src.trim()) return;
-
   let html = window.marked ? window.marked.parse(src) : `<pre>${src}</pre>`;
   const div = document.createElement('div');
   div.className = 'markdown-preview';
@@ -64,6 +63,7 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
     cell.dom.runBtn.title = 'Interrupt Execution';
     cell.dom.execCountEl.textContent = '[*]';
     clearCellOutput(cell);
+
     const language = cell.language || 'python';
     console.log('[Jupy] Executing cell', id, 'language:', language);
     runSocket.send({
@@ -117,12 +117,15 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
       showToast('⚠️ NOT CONNECTED TO KERNEL — RECONNECTING…', 'danger');
       return;
     }
+
     const idx = indexOf(id);
+
     if (state.runningCellId === id) {
       showToast('⚠️ CELL ALREADY RUNNING', 'warning');
       if (advance) advanceSelectionAfter(idx);
       return;
     }
+
     if (state.runningCellId !== null) {
       // Queue the cell
       if (!executionQueue.includes(id)) {
@@ -138,8 +141,10 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
       if (advance) advanceSelectionAfter(idx);
       return;
     }
+
     // Run now
     executeNextInQueue(id);
+
     if (insertBelow) {
       if (!operations) {
         console.error('[Jupy] insertBelow: operations is null!');
@@ -166,10 +171,13 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
       return;
     }
 
+    // FIX #5: Use wrapped append function if tqdmIntegration has patched it
+    const appendFn = window.appendCellOutput || _appendCellOutput;
+
     if (data.type === 'stdout') {
-      appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stdout');
+      appendFn(cell, data.text.replace(/\n$/, ''), 'stdout');
     } else if (data.type === 'stderr') {
-      appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stderr');
+      appendFn(cell, data.text.replace(/\n$/, ''), 'stderr');
     } else if (data.type === 'plot') {
       appendCellPlot(cell, data.html);
     } else if (data.type === 'display') {
@@ -204,11 +212,41 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
     [...cells].forEach((cell) => runCell(cell.id, { advance: false }));
   }
 
+  function clearExecutionQueue() {
+    if (executionQueue.length > 0) {
+      executionQueue.forEach(id => {
+        const cell = getCell(id);
+        if (cell) {
+          cell.dom.root.classList.remove('queued', 'running');
+          cell.dom.runBtn.textContent = '▶';
+          cell.dom.runBtn.title = 'Run cell (Shift+Enter)';
+          cell.dom.execCountEl.textContent = '[ ]';
+        }
+      });
+      executionQueue.length = 0;
+    }
+    if (state.runningCellId) {
+      const runningCell = getCell(state.runningCellId);
+      if (runningCell) {
+        runningCell.dom.root.classList.remove('running', 'queued');
+        runningCell.dom.runBtn.textContent = '▶';
+        runningCell.dom.runBtn.title = 'Run cell (Shift+Enter)';
+        // Don't reset execCount if it already finished, but reset if it was interrupted/dropped
+        if (runningCell.dom.execCountEl.textContent === '[*]') {
+          runningCell.dom.execCountEl.textContent = '[ ]';
+        }
+      }
+      state.runningCellId = null;
+      setStatus('idle');
+    }
+  }
+
   return {
     runCell,
     handleRunMessage,
     runAll,
     executeNextInQueue,
     advanceSelectionAfter,
+    clearExecutionQueue, // Exposed for controller
   };
 }

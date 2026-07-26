@@ -116,6 +116,7 @@ export function createNotebookController({
   }
 
   // ===== Public API =====
+    // ===== Public API =====
   return {
     insertCellAt: operations.insertCellAt,
     deleteCell: operations.deleteCell,
@@ -152,5 +153,6 @@ export function createNotebookController({
     togglePresentation: presentation.toggle,
     setStatus,
     executeNextInQueue: execution.executeNextInQueue,
+    clearExecutionQueue: execution.clearExecutionQueue, // FIX #11: Added this line
   };
 }

@@ -75,18 +75,15 @@ export function setupEnvManager({
 
   function renderPackages() {
     const query = searchInput.value.trim().toLowerCase();
-
     if (!packages.length) {
       listEl.innerHTML = `<div class="pip-manager-empty">${loaded ? 'No packages installed.' : 'Loading packages…'}</div>`;
       return;
     }
-
     const filtered = query ? packages.filter((p) => p.name.toLowerCase().includes(query)) : packages;
     if (!filtered.length) {
       listEl.innerHTML = `<div class="pip-manager-empty">No packages match “${escapeHtml(searchInput.value.trim())}”.</div>`;
       return;
     }
-
     listEl.innerHTML = '';
     filtered.forEach((pkg) => {
       const row = document.createElement('div');
@@ -102,7 +99,6 @@ export function setupEnvManager({
   }
 
   // --- Outline ---
-
   function renderOutline() {
     if (!notebook) return;
     const cells = notebook.getCells();
@@ -127,7 +123,6 @@ export function setupEnvManager({
       outlineListEl.innerHTML = '<div class="pip-manager-empty">No functions or classes found.</div>';
       return;
     }
-
     outlineListEl.innerHTML = '';
     items.forEach((item) => {
       const div = document.createElement('div');
@@ -176,8 +171,6 @@ export function setupEnvManager({
       cell.cm.on('change', handler);
       cellChangeListeners.push(() => cell.cm.off('change', handler));
     });
-    // Also listen for when cells are added/deleted/moved (patch methods)
-    // We'll rely on the notebook's callbacks for that.
   }
 
   function stopOutlineListening() {
@@ -185,12 +178,7 @@ export function setupEnvManager({
     cellChangeListeners = [];
   }
 
-  // We'll also need to listen to cell insertion/deletion via notebook's public methods.
-  // For that, we can monkey-patch the notebook insert/delete methods in the controller
-  // to call scheduleOutlineUpdate (already done in app.js).
-
   // --- API calls ---
-
   async function refreshEnvInfo() {
     try {
       const res = await fetch('/api/env/list');
@@ -228,7 +216,6 @@ export function setupEnvManager({
     if (busy) return;
     const mode = modeRadios.find((r) => r.checked)?.value || 'global';
     const name = mode === 'named' ? namedSelect.value : undefined;
-
     setBusy(true, '⏳ Switching environment (first use may take a moment)…', statusLine);
     try {
       const res = await fetch('/api/env/select', {
@@ -242,6 +229,12 @@ export function setupEnvManager({
         await refreshEnvInfo();
         loaded = false;
         await refreshPackages();
+        
+        // FIX #6: Actually restart the kernel so the new environment takes effect
+        if (notebook && typeof notebook.restartKernel === 'function') {
+          await notebook.restartKernel();
+        }
+        
         onEnvSwitched?.();
       } else {
         showToast('⚠️ FAILED TO SWITCH ENVIRONMENT', 'danger');
@@ -259,7 +252,6 @@ export function setupEnvManager({
   async function createEnv() {
     const name = createInput.value.trim();
     if (!name || busy) return;
-
     setBusy(true, `⏳ Creating "${name}"…`, createStatusLine);
     try {
       const res = await fetch('/api/env/create', {
@@ -292,7 +284,6 @@ export function setupEnvManager({
   async function install() {
     const spec = installInput.value.trim();
     if (!spec || busy) return;
-
     setBusy(true, `⏳ Installing ${spec}…`, pipStatusLine);
     try {
       const res = await fetch('/api/pip/install', {
@@ -304,7 +295,6 @@ export function setupEnvManager({
       packages = data.packages || packages;
       loaded = true;
       renderPackages();
-
       if (data.success) {
         showToast(`📦 INSTALLED ${spec.toUpperCase()}`, 'success');
         installInput.value = '';
@@ -324,7 +314,6 @@ export function setupEnvManager({
   async function uninstall(name) {
     if (busy) return;
     setBusy(true, `⏳ Removing ${name}…`, pipStatusLine);
-
     try {
       const res = await fetch('/api/pip/uninstall', {
         method: 'POST',
@@ -335,7 +324,6 @@ export function setupEnvManager({
       packages = data.packages || packages;
       loaded = true;
       renderPackages();
-
       if (data.success) {
         showToast(`🗑️ REMOVED ${name.toUpperCase()}`, 'warning');
         await refreshEnvInfo();
@@ -352,7 +340,6 @@ export function setupEnvManager({
   }
 
   // --- View management ---
-
   function showView(view) {
     Object.entries(views).forEach(([key, el]) => {
       if (el) el.hidden = key !== view;
@@ -371,18 +358,15 @@ export function setupEnvManager({
 
   function openView(view) {
     if (!views[view]) return;
-
     if (!panel.hidden && activeView === view) {
       close();
       return;
     }
-
     showView(view);
     panel.hidden = false;
     refreshEnvInfo();
     if (view === 'pip' && !loaded) refreshPackages();
     if (onResize) onResize();
-
     if (view === 'pip') setTimeout(() => searchInput.focus(), 50);
     else if (view === 'create') setTimeout(() => createInput.focus(), 50);
   }

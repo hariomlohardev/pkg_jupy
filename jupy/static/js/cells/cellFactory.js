@@ -15,18 +15,29 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
   const outputEl = frag.querySelector('.cell-output');
   const toolbar = frag.querySelector('.cell-toolbar');
 
-  // ---------- Markdown styling ----------
+    // ---------- Markdown styling ----------
   if (type === 'markdown') {
     root.classList.add('cell-md');
+    root.style.position = 'relative'; // Needed for absolute edit button
+
+    // Add Colab-style floating edit button
+    const editBtn = document.createElement('button');
+    editBtn.className = 'md-edit-btn';
+    editBtn.innerHTML = '✏️';
+    editBtn.title = 'Edit markdown';
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setMarkdownEdit(cell);
+    });
+    root.appendChild(editBtn);
+
     // Hide the gutter (run button + execution count) entirely
     const gutter = frag.querySelector('.cell-gutter');
     if (gutter) gutter.style.display = 'none';
-    // Optionally hide the drag handle for a cleaner look
+    
+    // Hide drag handle
     const dragHandle = frag.querySelector('.cell-drag-handle');
     if (dragHandle) dragHandle.style.display = 'none';
-    // Make the toolbar always visible but less intrusive
-    toolbar.style.opacity = '0.5';
-    toolbar.style.marginTop = '4px';
   }
 
   const dragHandleEl = frag.querySelector('.cell-drag-handle');
@@ -69,25 +80,48 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
     tabSize: 4,
     indentWithTabs: false,
     autoCloseBrackets: true,
-    extraKeys: {
+        extraKeys: {
       'Shift-Enter': (editor) => {
-        hooks.onRun(cell.id, { advance: true });
+        if (cell.type === 'markdown') {
+          renderMarkdown(cell);
+          hooks.onExitEdit(cell.id);
+          hooks.onRun(cell.id, { advance: true }); // Advance to next cell
+        } else {
+          hooks.onRun(cell.id, { advance: true });
+        }
       },
       'Ctrl-Enter': (editor) => {
-        if (editor.state.completionActive) editor.state.completionActive.close();
-        hooks.onRun(cell.id, { advance: false });
+        if (cell.type === 'markdown') {
+          renderMarkdown(cell);
+          hooks.onExitEdit(cell.id);
+        } else {
+          if (editor.state.completionActive) editor.state.completionActive.close();
+          hooks.onRun(cell.id, { advance: false });
+        }
       },
       'Cmd-Enter': (editor) => {
-        if (editor.state.completionActive) editor.state.completionActive.close();
-        hooks.onRun(cell.id, { advance: false });
+        if (cell.type === 'markdown') {
+          renderMarkdown(cell);
+          hooks.onExitEdit(cell.id);
+        } else {
+          if (editor.state.completionActive) editor.state.completionActive.close();
+          hooks.onRun(cell.id, { advance: false });
+        }
       },
       'Alt-Enter': (editor) => {
-        if (editor.state.completionActive) editor.state.completionActive.close();
-        hooks.onRun(cell.id, { insertBelow: true });
+        if (cell.type === 'markdown') {
+          renderMarkdown(cell);
+          hooks.onExitEdit(cell.id);
+          hooks.onRun(cell.id, { insertBelow: true });
+        } else {
+          if (editor.state.completionActive) editor.state.completionActive.close();
+          hooks.onRun(cell.id, { insertBelow: true });
+        }
       },
       'Esc': () => {
-        if (cell.type === 'markdown' && cell.isPreview) {
-          setMarkdownEdit(cell);
+        if (cell.type === 'markdown' && !cell.isPreview) {
+          renderMarkdown(cell);
+          hooks.onExitEdit(cell.id);
         } else {
           hooks.onExitEdit(cell.id);
         }
@@ -134,6 +168,19 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
   });
 
   cm.on('focus', () => hooks.onEnterEdit(cell.id));
+
+  // Auto-render markdown when clicking outside
+  cm.on('blur', () => {
+    if (cell.type === 'markdown' && !cell.isPreview) {
+      setTimeout(() => {
+        // Check if focus moved outside the editor and toolbar
+        if (!cm.hasFocus() && !root.contains(document.activeElement)) {
+          renderMarkdown(cell);
+          hooks.onExitEdit(cell.id);
+        }
+      }, 150); // Small delay to allow clicking toolbar buttons
+    }
+  });
 
   // ---- CLICK TO SELECT ----
   root.addEventListener('click', (e) => {

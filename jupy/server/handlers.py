@@ -28,8 +28,8 @@ def get_kernel():
     if _kernel is None:
         print("[Jupy] Importing kernel for the first time...", flush=True)
         try:
-            from jupy.core.kernel import kernel
-            _kernel = kernel
+            from jupy.core.kernel.manager import KernelManager
+            _kernel = KernelManager()
             print("[Jupy] Kernel imported successfully.", flush=True)
         except Exception as e:
             print(f"[Jupy] ERROR importing kernel: {e}", flush=True)
@@ -43,7 +43,6 @@ def get_kernel_optional():
     if _kernel is not None:
         return _kernel
     return None
-
 
 class JupyHTTPHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -190,7 +189,8 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 message = data.get("message", "Update from Jupy")
                 try:
-                    subprocess.run(["git", "add", "."], cwd=os.getcwd(), check=True, capture_output=True, timeout=10)
+                    # FIX #10: Use 'git add -u' to only stage tracked files, avoiding accidental commits of .jupy_env etc.
+                    subprocess.run(["git", "add", "-u"], cwd=os.getcwd(), check=True, capture_output=True, timeout=10)
                     subprocess.run(["git", "commit", "-m", message], cwd=os.getcwd(), check=True, capture_output=True, timeout=10)
                     self._send_json({"success": True})
                 except subprocess.TimeoutExpired:
@@ -249,6 +249,7 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
 
             else:
                 self.send_error(404, "Endpoint not found")
+
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             return
         except Exception as e:
@@ -477,6 +478,7 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
             if opcode == 0x9:
                 self._ws_handle_ping(msg)
                 continue
+
             try:
                 req = json.loads(msg)
                 action = req.get("action")
@@ -504,13 +506,10 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
         env_info = kernel.env_info
         venv_dir = env_info["path"]
         venv_bin = env_info["bin"]
-
         env = os.environ.copy()
         env["VIRTUAL_ENV"] = venv_dir
         env["PATH"] = venv_bin + os.path.pathsep + env.get("PATH", "")
-
         shell = ["cmd.exe", "/K"] if sys.platform == "win32" else [env.get("SHELL", "/bin/bash"), "-i"]
-
         proc = subprocess.Popen(
             shell,
             stdin=subprocess.PIPE,
@@ -573,7 +572,6 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
         class NotebookFileHandler(watchdog.events.FileSystemEventHandler):
             def __init__(self, ws_send):
                 self.ws_send = ws_send
-
             def on_modified(self, event):
                 if not event.is_directory and event.src_path.endswith('.ipynb'):
                     self.ws_send({"type": "file_changed", "path": event.src_path})

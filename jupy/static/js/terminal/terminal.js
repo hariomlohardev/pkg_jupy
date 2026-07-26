@@ -1,13 +1,6 @@
 /**
  * terminal/terminal.js
  * The right-hand split-pane shell terminal.
- *
- * BUG FIX: previously used a bare WebSocket with no reconnect and no close
- * handling at all — if the connection dropped (server restart, network blip),
- * the terminal went silently dead with no way to recover short of a full page
- * reload. It's now backed by the shared ReconnectingSocket, and output is
- * capped to avoid unbounded memory growth over long sessions (mirroring the
- * cap already applied to cell output).
  */
 import { ReconnectingSocket } from '../core/socket.js';
 import { MAX_TERMINAL_OUTPUT_CHARS } from '../config/constants.js';
@@ -26,8 +19,7 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, output, input,
   }
 
   function ensureSocket() {
-    if (termSocket) return; // ReconnectingSocket already owns its own reconnect loop
-
+    if (termSocket) return;
     output.textContent = 'Jupy Terminal (.jupy_env) Ready.\n';
     termSocket = new ReconnectingSocket('/ws/terminal', {
       onMessage: (data) => {
@@ -66,11 +58,11 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, output, input,
         cmdHistory.push(val);
         historyIdx = cmdHistory.length;
       }
-
       const currentPrompt = promptLabel ? promptLabel.textContent : '(jupy_venv) ❯';
       appendOutput(`${currentPrompt} ${val}\n`);
-
-      termSocket.send({ type: 'command', cmd: val });
+      
+      // FIX: Backend expects { type: 'input', data: val }
+      termSocket.send({ type: 'input', data: val + '\n' });
       input.value = '';
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();

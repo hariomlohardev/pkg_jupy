@@ -28,6 +28,7 @@ import { initVariableExplorer } from './variableExplorer.js';
 import { initDebugger } from './debugger.js';
 import { initHyperparams } from './hyperparams.js';
 import { initTqdmIntegration } from './tqdmIntegration.js';
+import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
 
 (() => {
   // ===== DOM Elements =====
@@ -40,7 +41,6 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
   const themeToggleBtn = document.getElementById('btn-theme-toggle');
   const toastContainer = document.getElementById('toast-container');
   const envStatusLabel = document.getElementById('env-status-label');
-
   const terminalPanel = document.getElementById('terminal-panel');
   const terminalToggleBtn = document.getElementById('btn-terminal-toggle');
   const terminalCloseBtn = document.getElementById('btn-terminal-close');
@@ -48,24 +48,19 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
   const terminalOutput = document.getElementById('terminal-output');
   const terminalInput = document.getElementById('terminal-input');
   const terminalPromptLabel = document.getElementById('terminal-prompt-label');
-
   const runtimeMenu = document.getElementById('runtime-menu');
   const runtimeMenuTrigger = document.getElementById('runtime-menu-trigger');
   const runtimeMenuDropdown = document.getElementById('runtime-menu-dropdown');
-
   const envTopbarMenu = document.getElementById('env-topbar-menu');
   const envTopbarMenuTrigger = document.getElementById('env-topbar-menu-trigger');
   const envTopbarMenuDropdown = document.getElementById('env-topbar-menu-dropdown');
-
   const envPanel = document.getElementById('env-manager-panel');
   const envPanelTitle = document.getElementById('env-manager-title-text');
   const envCloseBtn = document.getElementById('btn-env-manager-close');
-
   const envViewCurrent = document.getElementById('env-view-current');
   const envViewCreate = document.getElementById('env-view-create');
   const envViewPip = document.getElementById('env-view-pip');
   const envViewOutline = document.getElementById('env-view-outline');
-
   const envModeRadios = Array.from(document.querySelectorAll('input[name="env-mode"]'));
   const envNamedSelect = document.getElementById('env-named-select');
   const envApplyBtn = document.getElementById('btn-env-apply');
@@ -75,24 +70,23 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
   const envPath = document.getElementById('env-path');
   const envPlatform = document.getElementById('env-platform');
   const envPackageCount = document.getElementById('env-package-count');
-
   const envCreateInput = document.getElementById('env-create-input');
   const envCreateBtn = document.getElementById('btn-env-create');
   const envCreateStatusLine = document.getElementById('env-create-status-line');
   const envExistingList = document.getElementById('env-existing-list');
-
   const pipManagerList = document.getElementById('pip-manager-list');
   const pipSearchInput = document.getElementById('pip-search-input');
   const pipInstallInput = document.getElementById('pip-install-input');
   const pipInstallBtn = document.getElementById('btn-pip-install');
   const pipStatusLine = document.getElementById('pip-status-line');
-
   const outlineListEl = document.getElementById('outline-list');
-
   const cellTemplate = document.getElementById('cell-template');
   const insertBarTemplate = document.getElementById('insert-bar-template');
 
   const showToast = createToaster(toastContainer);
+  
+  // FIX #5: Expose appendCellOutput globally so tqdmIntegration.js can wrap it
+  window.appendCellOutput = appendCellOutput;
 
   // ===== Theme & Metrics =====
   initTheme(themeToggleBtn);
@@ -101,7 +95,6 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
   // ===== Run Socket =====
   let notebook = null;
   let reconnectToastShown = false;
-
   const runSocket = new ReconnectingSocket('/ws/run', {
     onMessage: (data) => {
       if (data.type === 'widget') {
@@ -122,6 +115,10 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
       if (!reconnectToastShown) {
         showToast('⚠️ KERNEL CONNECTION LOST — RECONNECTING…', 'danger');
         reconnectToastShown = true;
+      }
+      // FIX #11: Clear queue and reset UI states when connection drops
+      if (notebook && typeof notebook.clearExecutionQueue === 'function') {
+        notebook.clearExecutionQueue();
       }
     },
   });
@@ -146,7 +143,6 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
     registerAutocomplete,
     onCellChange,
   });
-
   window.__jupy_notebook = notebook;
 
   // ===== Terminal =====
@@ -200,6 +196,7 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
     onResize: () => setTimeout(() => notebook.refreshAllEditors(), 50),
     onEnvSwitched: () => showToast('🔄 KERNEL RESTARTED ON NEW ENVIRONMENT', 'danger'),
   });
+
   envManager.refreshStatus();
 
   // ===== Dropdown Menus =====
@@ -252,6 +249,12 @@ import { initTqdmIntegration } from './tqdmIntegration.js';
     try {
       const res = await fetch('/api/restart', { method: 'POST' });
       if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+      
+      // FIX #11: Clear any pending executions before wiping outputs
+      if (typeof this.clearExecutionQueue === 'function') {
+        this.clearExecutionQueue();
+      }
+
       this.getCells().forEach((c) => {
         c.execCount = null;
         c.dom.execCountEl.textContent = '[\u00A0]';

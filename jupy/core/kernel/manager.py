@@ -58,7 +58,6 @@ class KernelManager:
         with self.lock:
             if self.proc is None or self.proc.poll() is not None:
                 self._cleanup_worker_script()
-
                 fd, script_path = tempfile.mkstemp(suffix='.py', text=True)
                 self.worker_script_path = script_path
                 try:
@@ -67,10 +66,8 @@ class KernelManager:
                 except Exception as e:
                     os.close(fd)
                     raise RuntimeError(f"Failed to write worker script: {e}")
-
                 env = os.environ.copy()
                 env["PYTHONUNBUFFERED"] = "1"
-
                 try:
                     proc = subprocess.Popen(
                         [self.python, script_path],
@@ -85,28 +82,23 @@ class KernelManager:
                 except Exception as e:
                     self._cleanup_worker_script()
                     raise RuntimeError(f"Couldn't launch Python: {e}") from e
-
-                # Read stderr in background
                 def read_stderr():
                     for line in proc.stderr:
                         print(f"[Kernel stderr] {line.rstrip()}", flush=True)
                 stderr_thread = threading.Thread(target=read_stderr, daemon=True)
                 stderr_thread.start()
-
                 q = queue.Queue()
                 def reader():
                     line = proc.stdout.readline()
                     q.put(line)
                 t = threading.Thread(target=reader, daemon=True)
                 t.start()
-
                 try:
                     line = q.get(timeout=20)
                 except queue.Empty:
                     _kill_process_tree(proc)
                     self._cleanup_worker_script()
                     raise RuntimeError("Kernel didn't respond within 20s on startup.")
-
                 ready = "---JUPY_KERNEL_READY---" in line
                 if not ready:
                     try:
@@ -120,7 +112,6 @@ class KernelManager:
                     detail = stderr_output.strip() or "exited immediately"
                     self._cleanup_worker_script()
                     raise RuntimeError(f"Couldn't start kernel: {detail}")
-
                 self.proc = proc
 
     def get_completions(self, code, line, col):
@@ -153,7 +144,7 @@ class KernelManager:
             return None
         try:
             proc = self.proc
-            if proc is None or proc.poll() is not None:
+            if proc is None or proc.poll() is None:
                 return None
             req = json.dumps({"action": "hover", "code": code, "line": line, "column": col}) + "\n"
             try: proc.stdin.write(req); proc.stdin.flush()
@@ -181,7 +172,6 @@ class KernelManager:
         return False
 
     def interrupt(self):
-        # Send interrupt signal to the worker instead of killing it
         with self.comm_lock:
             if self.proc and self.proc.poll() is None:
                 try:
@@ -189,7 +179,6 @@ class KernelManager:
                     self.proc.stdin.flush()
                 except:
                     pass
-        # Also fallback to process kill if that doesn't work
         return self.force_interrupt()
 
     def restart(self):
@@ -209,7 +198,6 @@ class KernelManager:
         return self.env_info
 
     def send_to_worker(self, data):
-        """Send arbitrary JSON data to the persistent worker (e.g., widget events)."""
         with self.comm_lock:
             if self.proc and self.proc.poll() is None:
                 try:
@@ -223,19 +211,21 @@ class KernelManager:
 
     def execute(self, code, ws_send_fn, timeout=None, language='python'):
         if language != 'python':
-            self._execute_other_language(code, ws_send_fn, language, timeout)
+            self.exec_count += 1
+            # FIX #2: Pass exec_count
+            self._execute_other_language(code, ws_send_fn, language, timeout, self.exec_count)
             return
-
+            
         self.exec_count += 1
         exec_count = self.exec_count
-
-        # Send code to persistent worker using the "execute" action
+        
         with self.comm_lock:
             proc = self.proc
             if proc is None or proc.poll() is not None:
                 ws_send_fn({"type": "stderr", "text": "Kernel not running. Restart required."})
                 ws_send_fn({"type": "complete", "exec_count": exec_count})
                 return
+                
             try:
                 proc.stdin.write(json.dumps({"action": "execute", "code": code}) + "\n")
                 proc.stdin.flush()
@@ -243,15 +233,15 @@ class KernelManager:
                 ws_send_fn({"type": "stderr", "text": f"Failed to send code: {e}"})
                 ws_send_fn({"type": "complete", "exec_count": exec_count})
                 return
-
-            # Read output from the worker until the cell complete marker
+                
+            completed_normally = False
             while proc.poll() is None:
                 line = proc.stdout.readline()
                 if not line:
                     break
                 line = line.rstrip('\n')
                 if line.startswith("---JUPY_STDOUT---"):
-                    continue  # stdout will come as standalone lines after this marker
+                    continue
                 elif line.startswith("---JUPY_STDERR---"):
                     continue
                 elif line.startswith("---JUPY_DISPLAY_DATA---"):
@@ -280,13 +270,16 @@ class KernelManager:
                         pass
                 elif "---JUPY_CELL_COMPLETE---" in line:
                     ws_send_fn({"type": "complete", "exec_count": exec_count})
+                    completed_normally = True
                     return
                 else:
-                    # Normal text output (stdout or stderr in the old protocol)
-                    # In the new worker script, actual output is sent with markers.
-                    # We'll forward anything unrecognized as stdout for safety.
                     if line.strip():
                         ws_send_fn({"type": "stdout", "text": line + "\n"})
+            
+            # FIX #3: Ensure complete message is sent if interrupted
+            if not completed_normally:
+                ws_send_fn({"type": "stderr", "text": "\n⏹ Execution interrupted by user.\n"})
+                ws_send_fn({"type": "complete", "exec_count": exec_count})
 
     def _execute_other_language(self, code, ws_send_fn, language, timeout, exec_count):
         if language == 'r':
@@ -299,11 +292,9 @@ class KernelManager:
             ws_send_fn({"type": "stderr", "text": f"Unsupported language: {language}"})
             ws_send_fn({"type": "complete", "exec_count": exec_count})
             return
-
         with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False, mode='w') as f:
             f.write(code)
             temp_file = f.name
-
         try:
             proc = subprocess.Popen(
                 [interpreter, temp_file],
@@ -316,7 +307,6 @@ class KernelManager:
             timer.start()
             stdout, stderr = proc.communicate()
             timer.cancel()
-
             if stdout:
                 ws_send_fn({"type": "stdout", "text": stdout})
             if stderr:
