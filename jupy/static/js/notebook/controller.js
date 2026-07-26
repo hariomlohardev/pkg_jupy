@@ -26,6 +26,13 @@ export function createNotebookController({
   // ===== State =====
   const state = createState();
 
+  // ===== Helper to update selection UI =====
+  function updateSelectionUI() {
+    const count = state.selectedIds.length;
+    const selInfo = document.getElementById('selection-info');
+    if (selInfo) selInfo.textContent = count > 0 ? `${count} selected` : '';
+  }
+
   // ===== Reorder DOM =====
   function reorderDom() {
     state.cells.forEach(c => {
@@ -34,7 +41,10 @@ export function createNotebookController({
     });
   }
 
-  // ===== Build cell =====
+  // ===== Selection (created first, uses updateSelectionUI) =====
+  const selection = createSelection(state, updateSelectionUI);
+
+  // ===== Build cell (needs selection and execution) =====
   function buildCell(source, type = 'code') {
     const id = 'cell-' + (++state.idCounter);
     return createCell(
@@ -64,24 +74,24 @@ export function createNotebookController({
     );
   }
 
-  // ===== Create sub-modules =====
+  // ===== Operations (needs selection.selectCell) =====
   const operations = createOperations(state, buildCell, reorderDom, selection.selectCell, showToast, runSocket);
-  const selection = createSelection(state, updateSelectionUI);
+
+  // ===== Execution (needs operations and selection) =====
   const execution = createExecution(state, runSocket, showToast, setStatus, operations, selection);
+
+  // ===== Clipboard (needs operations and selection) =====
   const clipboard = createClipboard(state, operations, selection);
+
+  // ===== Undo/Redo (needs operations and selection) =====
   const undoRedo = createUndoRedo(state, operations, selection);
+
+  // ===== Other modules =====
   const dnd = createDnD(container, state, operations, selection);
   const findReplace = createFindReplace(state);
   const status = createStatus(state);
   const presentation = createPresentation();
   const lineNumbers = createLineNumbers(state);
-
-  // ===== UI update helper =====
-  function updateSelectionUI() {
-    const count = state.selectedIds.length;
-    const selInfo = document.getElementById('selection-info');
-    if (selInfo) selInfo.textContent = count > 0 ? `${count} selected` : '';
-  }
 
   // ===== Set status =====
   function setStatus(newStatus) {
@@ -90,7 +100,6 @@ export function createNotebookController({
 
   // ===== Public API =====
   return {
-    // Existing
     insertCellAt: operations.insertCellAt,
     deleteCell: operations.deleteCell,
     moveCell: operations.moveCell,
@@ -110,8 +119,6 @@ export function createNotebookController({
     getSelectedId: () => state.selectedId,
     getEditingId: () => state.editingId,
     getCells: () => state.cells,
-
-    // New
     getSelectedIds: () => state.selectedIds,
     getSelectedIndices: state.getSelectedIndices,
     deselectAll: selection.deselectAll,

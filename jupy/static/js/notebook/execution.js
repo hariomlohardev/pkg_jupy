@@ -2,8 +2,15 @@
  * notebook/execution.js
  * Cell execution, queue, message handling, status.
  */
-import { clearCellOutput, appendCellOutput, appendCellPlot, appendCellStdinPrompt } from '../cells/cellOutput.js';
-
+// import { clearCellOutput, appendCellOutput, appendCellPlot, appendCellStdinPrompt } from '../cells/cellOutput.js';
+import { 
+  clearCellOutput, 
+  appendCellOutput, 
+  appendCellPlot, 
+  appendCellStdinPrompt,
+  appendDisplayData,   // add this
+  appendWidget         // add this
+} from '../cells/cellOutput.js';
 export function createExecution(state, runSocket, showToast, setStatus, operations, selection) {
   const { cells, indexOf, getCell, runningCellId, executionQueue } = state;
 
@@ -77,12 +84,10 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
     if (data.type === 'stderr') appendCellOutput(cell, data.text.replace(/\n$/, ''), 'stderr');
     if (data.type === 'plot') appendCellPlot(cell, data.html);
     if (data.type === 'display') {
-      // we need appendDisplayData – we'll import it if needed, or just pass to handler
-      // For now, we'll treat as stdout
-      appendCellOutput(cell, JSON.stringify(data.data), 'stdout');
+      appendDisplayData(cell, data.data);
     }
     if (data.type === 'widget') {
-      // widget handling – we need to forward to widget manager
+      appendWidget(cell, data.data);
     }
     if (data.type === 'stdin_request') {
       appendCellStdinPrompt(cell, data.prompt, (value) => {

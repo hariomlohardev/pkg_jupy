@@ -1,9 +1,8 @@
 /**
  * cells/cellOutput.js
- * Rendering of cell outputs (text, plots, and rich MIME data).
+ * Rendering of cell outputs (text, plots, rich display data, widgets).
  */
 import { MAX_CELL_OUTPUT_LINES } from '../config/constants.js';
-
 
 export function clearCellOutput(cell) {
   cell.outputs = [];
@@ -39,16 +38,6 @@ export function appendCellPlot(cell, htmlString) {
   scrollToBottom(cell);
 }
 
-/**
- * Render MIME display data (from IPython.display, etc.)
- * @param {object} cell
- * @param {object} mimeData - dictionary with MIME types as keys
- */
-
-
-/**
- * Render rich display data (from IPython.display, etc.)
- */
 export function appendDisplayData(cell, mimeData) {
   cell.dom.outputEl.hidden = false;
   const container = document.createElement('div');
@@ -96,9 +85,6 @@ export function appendDisplayData(cell, mimeData) {
   scrollToBottom(cell);
 }
 
-/**
- * Render a widget (from ipywidgets)
- */
 export function appendWidget(cell, widgetData) {
   cell.dom.outputEl.hidden = false;
   const container = document.createElement('div');
@@ -110,38 +96,9 @@ export function appendWidget(cell, widgetData) {
   }
   cell.dom.outputEl.appendChild(container);
   cell.outputs.push({ kind: 'widget', data: widgetData });
+  scrollToBottom(cell);
 }
 
-function scrollToBottom(cell) {
-  requestAnimationFrame(() => {
-    cell.dom.outputEl.scrollTop = cell.dom.outputEl.scrollHeight;
-  });
-}
-
-
-function trimOutputLines(cell) {
-  const spans = cell.dom.outputEl.querySelectorAll('span');
-  if (spans.length > MAX_CELL_OUTPUT_LINES) {
-    const overflow = spans.length - MAX_CELL_OUTPUT_LINES;
-    for (let i = 0; i < overflow; i++) {
-      spans[i].remove();
-    }
-  }
-}
-
-function scrollToBottom(cell) {
-  requestAnimationFrame(() => {
-    cell.dom.outputEl.scrollTop = cell.dom.outputEl.scrollHeight;
-  });
-}
-
-
-/**
- * Renders an inline `input()` prompt inside the cell's output pane.
- * @param {*} cell
- * @param {string} promptText
- * @param {(value: string) => void} onSubmit - called with the typed value
- */
 export function appendCellStdinPrompt(cell, promptText, onSubmit) {
   cell.dom.outputEl.hidden = false;
   const box = document.createElement('div');
@@ -187,12 +144,18 @@ export function appendCellStdinPrompt(cell, promptText, onSubmit) {
   });
 }
 
+function trimOutputLines(cell) {
+  const spans = cell.dom.outputEl.querySelectorAll('span');
+  if (spans.length > MAX_CELL_OUTPUT_LINES) {
+    const overflow = spans.length - MAX_CELL_OUTPUT_LINES;
+    for (let i = 0; i < overflow; i++) {
+      spans[i].remove();
+    }
+  }
+}
 
-
-
-/**
- * cells/cellOutput.js
- * Rendering of cell outputs (text, plots, rich display data, widgets).
- */
-
-// ... existing functions (clearCellOutput, appendCellOutput, appendCellPlot, appendCellStdinPrompt) ...
+function scrollToBottom(cell) {
+  requestAnimationFrame(() => {
+    cell.dom.outputEl.scrollTop = cell.dom.outputEl.scrollHeight;
+  });
+}

@@ -100,6 +100,15 @@
     <button class="btn btn-secondary" id="btn-find" title="Find (Ctrl+F)">🔍</button>
     <button class="btn btn-secondary" id="btn-line-numbers" title="Toggle line numbers (Ctrl+Shift+L)">#</button>
     <button class="btn btn-secondary" id="btn-presentation" title="Presentation mode (Ctrl+Shift+P)">⛶</button>
+
+    <!-- New Export Buttons -->
+    <div style="display:inline-flex; gap:2px; border-left:2px solid var(--color-border); padding-left:6px;">
+      <button class="btn btn-secondary" id="btn-export-html" title="Export as HTML">🌐 HTML</button>
+      <button class="btn btn-secondary" id="btn-export-py" title="Export as Python script">🐍 PY</button>
+      <button class="btn btn-secondary" id="btn-export-md" title="Export as Markdown">📝 MD</button>
+      <button class="btn btn-secondary" id="btn-export-pdf" title="Export as PDF (print)">📄 PDF</button>
+    </div>
+
     <button class="btn btn-warning" id="btn-terminal-toggle">📟 TERMINAL</button>
     <button class="btn btn-secondary" id="btn-theme-toggle" title="Toggle Light/Dark Theme">☀ DARK</button>
     <input type="file" id="file-input" accept=".ipynb" hidden />

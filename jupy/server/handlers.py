@@ -8,7 +8,7 @@ import subprocess
 from http.server import SimpleHTTPRequestHandler
 from jupy import __version__ as JUPY_VERSION
 from jupy.core import envmanager
-from jupy.core.kernel import kernel   # same, but now imports from package
+from jupy.core.kernel import kernel
 from jupy.core.metrics import get_system_metrics
 from jupy.core.terminal import TerminalSession
 from jupy.core.venv import get_python_version, install_package, list_packages, uninstall_package
@@ -88,6 +88,31 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 success, error = envmanager.delete_global_env(name)
                 self._send_json({"success": success, "error": error, "global_envs": envmanager.list_global_envs()})
 
+            # ----- Export endpoints -----
+            elif self.path == "/api/export/html":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                notebook_json = data.get("notebook", {})
+                html = self._export_to_html(notebook_json)
+                self._send_json({"html": html})
+
+            elif self.path == "/api/export/py":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                notebook_json = data.get("notebook", {})
+                script = self._export_to_py(notebook_json)
+                self._send_json({"script": script})
+
+            elif self.path == "/api/export/md":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                notebook_json = data.get("notebook", {})
+                md = self._export_to_md(notebook_json)
+                self._send_json({"markdown": md})
+
+            elif self.path == "/api/export/pdf":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                notebook_json = data.get("notebook", {})
+                html = self._export_to_html(notebook_json, for_pdf=True)
+                self._send_json({"html": html})
+
             else:
                 self.send_error(404, "Endpoint not found")
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
@@ -142,6 +167,71 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
             "package_count": len(list_packages(info["python"])),
         }
 
+    # ----- Export methods -----
+    def _export_to_html(self, notebook_json, for_pdf=False):
+        cells = notebook_json.get("cells", [])
+        # Build HTML with styles
+        html = """<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Exported Notebook</title>
+<style>
+body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; }
+.cell { margin: 20px 0; border-left: 3px solid #ccc; padding-left: 15px; }
+.cell-code { background: #f5f5f5; padding: 10px; border-radius: 4px; font-family: monospace; white-space: pre-wrap; }
+.cell-output { background: #fff; padding: 10px; border: 1px solid #ddd; margin-top: 5px; }
+.cell-markdown { font-family: sans-serif; }
+.plot-container { text-align: center; }
+</style>
+</head>
+<body>
+"""
+        for cell in cells:
+            cell_type = cell.get("type", "code")
+            source = cell.get("source", "")
+            outputs = cell.get("outputs", [])
+            if cell_type == "markdown":
+                # Use marked to render markdown if available? We'll just output raw source.
+                html += f'<div class="cell cell-markdown">{source}</div>'
+            else:
+                html += f'<div class="cell cell-code"><pre>{source}</pre>'
+                for out in outputs:
+                    if out.get("kind") == "stdout":
+                        html += f'<div class="cell-output">{out["text"]}</div>'
+                    elif out.get("kind") == "stderr":
+                        html += f'<div class="cell-output" style="color:red;">{out["text"]}</div>'
+                    elif out.get("kind") == "plot":
+                        html += f'<div class="cell-output plot-container">{out["text"]}</div>'
+                    elif out.get("kind") == "display":
+                        # Try to get HTML from display data
+                        data = out.get("data", {})
+                        if "text/html" in data:
+                            html += f'<div class="cell-output">{data["text/html"]}</div>'
+                        else:
+                            html += f'<div class="cell-output">{data.get("text/plain", str(data))}</div>'
+                html += '</div>'
+        html += "</body></html>"
+        return html
+
+    def _export_to_py(self, notebook_json):
+        cells = notebook_json.get("cells", [])
+        lines = []
+        for cell in cells:
+            if cell.get("type") == "code":
+                source = cell.get("source", "")
+                lines.append(source)
+        return "\n\n".join(lines)
+
+    def _export_to_md(self, notebook_json):
+        cells = notebook_json.get("cells", [])
+        lines = []
+        for cell in cells:
+            if cell.get("type") == "markdown":
+                lines.append(cell.get("source", ""))
+            elif cell.get("type") == "code":
+                lines.append("```python\n" + cell.get("source", "") + "\n```")
+        return "\n\n".join(lines)
+
+    # ----- WebSocket handlers (unchanged) -----
     def handle_metrics_ws(self):
         ws_lock = threading.Lock()
 
@@ -195,7 +285,6 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 pass
 
     def handle_terminal_ws(self):
-        """Native Shell Handler with chunked stdout reading."""
         env = os.environ.copy()
         env["VIRTUAL_ENV"] = VENV_DIR
         env["PATH"] = VENV_BIN + os.path.pathsep + env.get("PATH", "")
