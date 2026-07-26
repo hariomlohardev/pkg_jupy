@@ -221,3 +221,32 @@
   opacity: 0.6;
   flex-shrink: 0;
 }
+
+
+/* Hover tooltip */
+.jupy-hover-tooltip {
+  background: var(--color-surface);
+  border: var(--border-thick);
+  border-radius: var(--rounded-sm);
+  box-shadow: var(--shadow-brutal-lg);
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  max-width: 400px;
+  max-height: 200px;
+  overflow: auto;
+  pointer-events: none;
+  z-index: 100000;
+}
+
+/* Outline items */
+.outline-item:hover {
+  background: var(--color-bg-well);
+}
+.outline-item:active {
+  background: var(--color-secondary);
+}
+
+.jupy-hover-tooltip {
+  pointer-events: auto !important;
+}

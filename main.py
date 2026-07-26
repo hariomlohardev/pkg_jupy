@@ -25,6 +25,43 @@ def _clear_pycache(root):
 _clear_pycache(os.path.join(BASE_DIR, "jupy"))
 
 from jupy.cli import main
+import os
+import shutil
+from pathlib import Path
+
+def clear_python_cache():
+    # Gets the directory where this script is located
+    root_dir = Path(__file__).resolve().parent
+    print(f"Scanning for Python cache in: {root_dir}\n")
+    
+    deleted_folders = 0
+    deleted_files = 0
+
+    # Walk through all directories and files recursively
+    for item in root_dir.rglob('*'):
+        # 1. Target and delete __pycache__ directories
+        if item.is_dir() and item.name == '__pycache__':
+            try:
+                shutil.rmtree(item)
+                print(f"Removed folder: {item.relative_to(root_dir)}")
+                deleted_folders += 1
+            except Exception as e:
+                print(f"Failed to delete folder {item}: {e}")
+                
+        # 2. Target and delete loose .pyc or .pyo files
+        elif item.is_file() and item.suffix in ['.pyc', '.pyo']:
+            try:
+                item.unlink()
+                print(f"Removed file:   {item.relative_to(root_dir)}")
+                deleted_files += 1
+            except Exception as e:
+                print(f"Failed to delete file {item}: {e}")
+
+    print(f"\nCleanup finished! Removed {deleted_folders} folders and {deleted_files} files.")
+
+# if __name__ == "__main__":
+#     clear_python_cache()
 
 if __name__ == "__main__":
+    clear_python_cache()
     main()

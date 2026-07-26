@@ -32,7 +32,16 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 comps = kernel.get_completions(code, line, col)
                 self._send_json({"completions": comps})
 
+            elif self.path == "/api/hover":          # <-- added this block
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                code = data.get("code", "")
+                line = data.get("line", 1)
+                col = data.get("column", 0)
+                info = kernel.get_hover(code, line, col)
+                self._send_json({"hover": info})
+                
             elif self.path == "/api/restart":
+
                 kernel.restart()
                 self._send_json({"status": "restarted", "exec_count": kernel.exec_count})
 

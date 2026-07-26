@@ -46,11 +46,23 @@ def _custom_input(prompt=""):
 
 builtins.input = _custom_input
 
+# Lazy matplotlib backend – only set when capturing plots
+_matplotlib_backend_set = False
+
 def _capture_plots():
+    global _matplotlib_backend_set
     plots = []
     if "matplotlib.pyplot" in sys.modules:
         import matplotlib.pyplot as plt
         from matplotlib._pylab_helpers import Gcf
+
+        if not _matplotlib_backend_set:
+            try:
+                import matplotlib
+                matplotlib.use("Agg", force=True)
+                _matplotlib_backend_set = True
+            except Exception:
+                pass
 
         fignums = plt.get_fignums()
         for i in list(fignums):
@@ -166,6 +178,34 @@ def _get_worker_completions(code, line, col):
 
     return completions
 
+def _get_worker_hover(code, line, col):
+    try:
+        import jedi
+        script = jedi.Script(code)
+        # Get definitions and signatures
+        names = script.infer(line, col)
+        if not names:
+            return None
+        # Get the first definition
+        name = names[0]
+        docstring = name.docstring() or ""
+        # Get signature if it's a function/class
+        sig = ""
+        if hasattr(name, 'get_signatures'):
+            sigs = name.get_signatures()
+            if sigs:
+                sig = sigs[0].to_string()
+        return {
+            "name": name.name,
+            "type": name.type,
+            "description": docstring.split("\n")[0] if docstring else "",
+            "docstring": docstring,
+            "signature": sig,
+            "module": name.module_name
+        }
+    except Exception:
+        return None
+
 sys.stdout.write("---JUPY_KERNEL_READY---\n")
 sys.stdout.flush()
 
@@ -185,15 +225,18 @@ while True:
             sys.stdout.write(f"---JUPY_COMPS:{json.dumps(comps)}---\n")
             sys.stdout.flush()
 
+        elif action == "hover":
+            code = data.get("code", "")
+            l_num = data.get("line", 1)
+            c_num = data.get("column", 0)
+            info = _get_worker_hover(code, l_num, c_num)
+            sys.stdout.write(f"---JUPY_HOVER:{json.dumps(info)}---\n")
+            sys.stdout.flush()
+
         elif action == "execute":
             code = data.get("code", "")
 
             try:
-                if "matplotlib" in sys.modules:
-                    import matplotlib
-                    try: matplotlib.use("Agg", force=True)
-                    except Exception: pass
-
                 tree = ast.parse(code, mode="exec")
                 if tree.body and isinstance(tree.body[-1], ast.Expr):
                     last = tree.body.pop()
@@ -203,16 +246,20 @@ while True:
                     ast.copy_location(expr, last.value)
                     val = eval(compile(expr, "<cell>", "eval"), namespace)
                     if val is not None:
-                        print(repr(val), flush=True)
+                        sys.stdout.write(repr(val) + "\n")
+                        sys.stdout.flush()
                 else:
                     exec(compile(code, "<cell>", "exec"), namespace)
 
                 plots = _capture_plots()
                 if plots:
-                    print("---JUPY_PLOTS_START---", flush=True)
+                    sys.stdout.write("---JUPY_PLOTS_START---\n")
+                    sys.stdout.flush()
                     for p in plots:
-                        print(p, flush=True)
-                    print("---JUPY_PLOTS_END---", flush=True)
+                        sys.stdout.write(p + "\n")
+                        sys.stdout.flush()
+                    sys.stdout.write("---JUPY_PLOTS_END---\n")
+                    sys.stdout.flush()
 
             except SyntaxError as e:
                 err_msg = "".join(traceback.format_exception_only(type(e), e))
@@ -224,11 +271,14 @@ while True:
                 sys.stdout.write(f"---JUPY_STDERR_START---\n{err_msg}---JUPY_STDERR_END---\n")
                 sys.stdout.flush()
 
-            print("---JUPY_CELL_COMPLETE---", flush=True)
+            sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
+            sys.stdout.flush()
 
     except Exception as e:
         sys.stdout.write(f"---JUPY_STDERR_START---\nKernel error: {e}\n---JUPY_STDERR_END---\n")
-        print("---JUPY_CELL_COMPLETE---", flush=True)
+        sys.stdout.flush()
+        sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
+        sys.stdout.flush()
 """
 
 
@@ -330,16 +380,6 @@ class KernelManager:
                         break
 
                 if not ready:
-                    # The interpreter started but the worker script never got
-                    # far enough to report ready — almost always means this
-                    # environment's Python install is broken/incomplete (see
-                    # core/envmanager.py's ensure_env, which now catches the
-                    # most common cause of this). Surface *why*, using
-                    # whatever the dead process printed to stderr, instead of
-                    # silently leaving self.proc pointed at a dead process —
-                    # that used to surface much later, and far more
-                    # confusingly, as "Kernel communication error: [Errno 22]
-                    # Invalid argument" the moment a cell tried to run.
                     try:
                         stderr_output = proc.stderr.read()
                     except Exception:
@@ -391,6 +431,43 @@ class KernelManager:
                     break
 
             return []
+        finally:
+            self.comm_lock.release()
+
+    def get_hover(self, code, line, col):
+        """Sends hover request to worker kernel and returns info dict or None."""
+        if not self.comm_lock.acquire(blocking=False):
+            return None
+
+        try:
+            proc = self.proc
+            if proc is None or proc.poll() is not None:
+                return None
+
+            req = json.dumps({"action": "hover", "code": code, "line": line, "column": col}) + "\n"
+            try:
+                proc.stdin.write(req)
+                proc.stdin.flush()
+            except Exception:
+                return None
+
+            while proc and proc.poll() is None:
+                line_str = proc.stdout.readline()
+                if not line_str:
+                    break
+
+                if line_str.startswith("---JUPY_HOVER:"):
+                    json_str = line_str.replace("---JUPY_HOVER:", "").strip()
+                    if json_str.endswith("---"):
+                        json_str = json_str[:-3]
+                    try:
+                        return json.loads(json_str) if json_str and json_str != "null" else None
+                    except Exception:
+                        return None
+                elif "---JUPY_CELL_COMPLETE---" in line_str:
+                    break
+
+            return None
         finally:
             self.comm_lock.release()
 
@@ -455,19 +532,26 @@ class KernelManager:
         pip_cmds = []
         py_lines = []
 
+        # Faster pip detection using startswith and slicing
         for line in lines:
             stripped = line.strip()
-            if re.match(r'^[!%]?\s*pip\s+install\s+', stripped):
-                clean_cmd = re.sub(r'^[!%]?\s*pip\s+install\s+', '', stripped)
-                pip_cmds.append(clean_cmd)
+            if stripped.startswith(('!pip install', '%pip install', 'pip install')):
+                # Remove leading ! or % and the "pip install" part
+                cmd = stripped.lstrip('!%').lstrip()
+                if cmd.startswith('pip install '):
+                    clean_cmd = cmd[11:].strip()
+                    if clean_cmd:
+                        pip_cmds.append(clean_cmd)
             else:
                 py_lines.append(line)
 
         for cmd in pip_cmds:
             ws_send_fn({"type": "stdout", "text": f"Installing {cmd}...\n"})
             p = subprocess.run([self.python, "-m", "pip", "install"] + cmd.split(), capture_output=True, text=True)
-            if p.stdout: ws_send_fn({"type": "stdout", "text": p.stdout})
-            if p.stderr: ws_send_fn({"type": "stderr", "text": p.stderr})
+            if p.stdout:
+                ws_send_fn({"type": "stdout", "text": p.stdout})
+            if p.stderr:
+                ws_send_fn({"type": "stderr", "text": p.stderr})
 
         clean_code = "\n".join(py_lines)
         if not clean_code.strip():
@@ -481,11 +565,6 @@ class KernelManager:
                 self._ensure_kernel_proc()
                 current_proc = self.proc
             except Exception as e:
-                # Environment is broken and couldn't start a kernel at all
-                # (see core/kernel.py's _ensure_kernel_proc and
-                # core/envmanager.py's ensure_env for the specific reasons
-                # this can raise). Surface the real reason instead of hanging
-                # the cell forever with no "complete" message.
                 ws_send_fn({"type": "stderr", "text": f"{e}\n"})
                 ws_send_fn({"type": "complete", "exec_count": self.exec_count})
                 return
@@ -513,7 +592,6 @@ class KernelManager:
             stderr_collecting = False
             plots_collecting = False
             plot_lines = []
-
 
             while current_proc:
                 try:
@@ -556,7 +634,9 @@ class KernelManager:
                 elif plots_collecting:
                     plot_lines.append(line.strip())
                 else:
-                    ws_send_fn({"type": "stdout", "text": line})
+                    # Skip sending empty lines to reduce WebSocket traffic
+                    if line.strip():
+                        ws_send_fn({"type": "stdout", "text": line})
 
         ws_send_fn({"type": "complete", "exec_count": self.exec_count})
 

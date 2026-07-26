@@ -94,7 +94,7 @@ import { setupEnvManager } from './env/envManager.js';
     showToast,
     registerAutocomplete,
   });
-
+  window.__jupy_notebook = notebook;
   setupTerminal(
     terminalToggleBtn,
     terminalCloseBtn,
@@ -112,7 +112,13 @@ import { setupEnvManager } from './env/envManager.js';
     panel: envPanel,
     titleEl: envPanelTitle,
     closeBtn: envCloseBtn,
-    views: { current: envViewCurrent, create: envViewCreate, pip: envViewPip },
+    views: {
+    current: envViewCurrent,
+    create: envViewCreate,
+    pip: envViewPip,
+    outline: document.getElementById('env-view-outline')
+  },
+
     modeRadios: envModeRadios,
     namedSelect: envNamedSelect,
     createInput: envCreateInput,
@@ -132,6 +138,8 @@ import { setupEnvManager } from './env/envManager.js';
     createStatusLine: envCreateStatusLine,
     existingEnvsEl: envExistingList,
     pipStatusLine,
+    outlineListEl: document.getElementById('outline-list'),
+    notebook: notebook, // pass the notebook controller
     showToast,
     onResize: () => setTimeout(() => notebook.refreshAllEditors(), 50),
     onEnvSwitched: () => showToast('🔄 KERNEL RESTARTED ON NEW ENVIRONMENT', 'danger'),

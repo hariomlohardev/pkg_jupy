@@ -58,8 +58,21 @@
         <button class="runtime-menu-item" id="envmenu-pip" role="menuitem" data-view="pip">
           <span class="runtime-menu-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span> Pip Manager
         </button>
+        <button class="runtime-menu-item" id="envmenu-outline" role="menuitem" data-view="outline">
+          <span class="runtime-menu-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span> Outline
+        </button>
       </div>
     </div>
+  </div>
+  <!-- VIEW: OUTLINE -->
+  <div class="env-view" id="env-view-outline" hidden>
+    <section class="env-section env-section-grow">
+      <h3>📋 OUTLINE</h3>
+      <div style="font-size:0.7rem;opacity:0.7;margin-bottom:6px;">Functions &amp; classes in your notebook</div>
+      <div class="outline-list" id="outline-list" style="flex:1;overflow-y:auto;max-height:400px;">
+        <div class="pip-manager-empty">No functions or classes found.</div>
+      </div>
+    </section>
   </div>
 
   <div class="title-block">
