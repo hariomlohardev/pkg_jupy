@@ -1,4 +1,4 @@
 {
-  "env_mode": "project",
+  "env_mode": "global",
   "env_name": "default"
 }

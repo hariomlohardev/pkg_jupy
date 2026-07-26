@@ -1,13 +1,6 @@
 """
 jupy/core/kernel.py
-Persistent Python Kernel Manager — one long-lived worker subprocess per
-notebook session, communicating over stdin/stdout with simple ASCII framing.
-
-Which interpreter backs the worker is now dynamic (see core/envmanager.py):
-by default it's a global env shared across projects, but the user can switch
-to a project-local `.jupy_env` or another named global env from the
-Environment panel — see switch_env() below, wired up via
-POST /api/env/select in server/handlers.py.
+Persistent Python Kernel Manager with rich display support.
 """
 import json
 import os
@@ -21,32 +14,70 @@ from jupy.core import envmanager
 # Persistent Kernel Worker Process Script
 KERNEL_WORKER_SCRIPT = r"""
 import sys, io, ast, base64, json, traceback, builtins, warnings, re, keyword, importlib, threading
+import contextlib
 
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 
 namespace = {"__name__": "__main__"}
 
-def _warmup_jedi():
-    try:
-        import jedi
-        jedi.Script("import math\nmath.").complete(2, 5)
-    except Exception:
-        pass
-
-threading.Thread(target=_warmup_jedi, daemon=True).start()
-
-def _custom_input(prompt=""):
-    prompt_str = str(prompt)
-    sys.stdout.write(f"---JUPY_STDIN_REQ:{prompt_str}---\n")
+# ----------------------------------------------------------------------
+# Custom display() function to capture rich MIME data
+# ----------------------------------------------------------------------
+def _send_display_data(mimebundle):
+    # Send MIME bundle to frontend via stdout marker.
+    sys.stdout.write("---JUPY_DISPLAY_DATA---\n")
+    sys.stdout.write(json.dumps(mimebundle) + "\n")
     sys.stdout.flush()
-    line = sys.stdin.readline()
-    if not line:
-        raise KeyboardInterrupt("Input stream closed.")
-    return line.rstrip("\r\n")
 
-builtins.input = _custom_input
+def display(obj, raw=False, **kwargs):
+    # Mimics IPython.display.display.
+    # Captures rich representations and sends them to the frontend.
+    # If obj is a dict with MIME keys, treat as mimebundle
+    if isinstance(obj, dict) and any(k in obj for k in ('text/html', 'text/plain', 'image/png', 'image/svg+xml')):
+        _send_display_data(obj)
+        return
 
-# Lazy matplotlib backend – only set when capturing plots
+    # Try to get rich representations
+    mimebundle = {}
+    # 1. Check for _repr_html_, _repr_svg_, _repr_latex_, _repr_markdown_, etc.
+    for fmt in ('html', 'svg', 'latex', 'markdown', 'json', 'png', 'jpeg'):
+        method = getattr(obj, f'_repr_{fmt}_', None)
+        if method is not None:
+            try:
+                data = method()
+                if data is not None:
+                    mimebundle[f'text/{fmt}'] = data
+            except Exception:
+                pass
+    # 2. If it's a pandas DataFrame, get HTML
+    if hasattr(obj, '_repr_html_'):
+        try:
+            html = obj._repr_html_()
+            if html:
+                mimebundle['text/html'] = html
+        except Exception:
+            pass
+    # 3. Fallback to repr
+    if not mimebundle:
+        try:
+            mimebundle['text/plain'] = repr(obj)
+        except Exception:
+            mimebundle['text/plain'] = str(obj)
+
+    # 4. If raw=True, skip repr and just send text
+    if raw:
+        mimebundle = {'text/plain': str(obj)}
+
+    # Send if we have something
+    if mimebundle:
+        _send_display_data(mimebundle)
+
+# Inject display into namespace
+namespace['display'] = display
+
+# ----------------------------------------------------------------------
+# Matplotlib plot capture (improved)
+# ----------------------------------------------------------------------
 _matplotlib_backend_set = False
 
 def _capture_plots():
@@ -88,6 +119,29 @@ def _capture_plots():
         except Exception: pass
 
     return plots
+
+# ----------------------------------------------------------------------
+# Autocomplete, hover, input helpers
+# ----------------------------------------------------------------------
+def _warmup_jedi():
+    try:
+        import jedi
+        jedi.Script("import math\nmath.").complete(2, 5)
+    except Exception:
+        pass
+
+threading.Thread(target=_warmup_jedi, daemon=True).start()
+
+def _custom_input(prompt=""):
+    prompt_str = str(prompt)
+    sys.stdout.write(f"---JUPY_STDIN_REQ:{prompt_str}---\n")
+    sys.stdout.flush()
+    line = sys.stdin.readline()
+    if not line:
+        raise KeyboardInterrupt("Input stream closed.")
+    return line.rstrip("\r\n")
+
+builtins.input = _custom_input
 
 def _get_worker_completions(code, line, col):
     completions = []
@@ -182,14 +236,19 @@ def _get_worker_hover(code, line, col):
     try:
         import jedi
         script = jedi.Script(code)
-        # Get definitions and signatures
         names = script.infer(line, col)
         if not names:
-            return None
-        # Get the first definition
-        name = names[0]
+            # Try goto_definition as fallback
+            defs = script.goto(line, col, follow_imports=True)
+            if defs:
+                # Use the first definition
+                name = defs[0]
+            else:
+                return None
+        else:
+            name = names[0]
+
         docstring = name.docstring() or ""
-        # Get signature if it's a function/class
         sig = ""
         if hasattr(name, 'get_signatures'):
             sigs = name.get_signatures()
@@ -206,6 +265,9 @@ def _get_worker_hover(code, line, col):
     except Exception:
         return None
 
+# ----------------------------------------------------------------------
+# Main execution loop
+# ----------------------------------------------------------------------
 sys.stdout.write("---JUPY_KERNEL_READY---\n")
 sys.stdout.flush()
 
@@ -236,58 +298,68 @@ while True:
         elif action == "execute":
             code = data.get("code", "")
 
-            try:
-                tree = ast.parse(code, mode="exec")
-                if tree.body and isinstance(tree.body[-1], ast.Expr):
-                    last = tree.body.pop()
-                    if tree.body:
-                        exec(compile(tree, "<cell>", "exec"), namespace)
-                    expr = ast.Expression(last.value)
-                    ast.copy_location(expr, last.value)
-                    val = eval(compile(expr, "<cell>", "eval"), namespace)
-                    if val is not None:
-                        sys.stdout.write(repr(val) + "\n")
-                        sys.stdout.flush()
-                else:
-                    exec(compile(code, "<cell>", "exec"), namespace)
+            # Capture stdout/stderr
+            out, err = io.StringIO(), io.StringIO()
 
-                plots = _capture_plots()
+            try:
+                # Redirect stdout/stderr to capture print and display output
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    # Parse and execute
+                    tree = ast.parse(code, mode="exec")
+                    if tree.body and isinstance(tree.body[-1], ast.Expr):
+                        last = tree.body.pop()
+                        if tree.body:
+                            exec(compile(tree, "<cell>", "exec"), namespace)
+                        expr = ast.Expression(last.value)
+                        ast.copy_location(expr, last.value)
+                        val = eval(compile(expr, "<cell>", "eval"), namespace)
+                        if val is not None:
+                            # Print repr to stdout
+                            sys.stdout.write(repr(val) + "\n")
+                    else:
+                        exec(compile(code, "<cell>", "exec"), namespace)
+
+                    # Capture plots after execution
+                    plots = _capture_plots()
+
+                # Send stdout/stderr
+                stdout_val = out.getvalue()
+                stderr_val = err.getvalue()
+                if stdout_val:
+                    sys.stdout.write("---JUPY_STDOUT---\n")
+                    sys.stdout.write(stdout_val)
+                if stderr_val:
+                    sys.stdout.write("---JUPY_STDERR---\n")
+                    sys.stdout.write(stderr_val)
+
+                # Send plots
                 if plots:
                     sys.stdout.write("---JUPY_PLOTS_START---\n")
-                    sys.stdout.flush()
                     for p in plots:
                         sys.stdout.write(p + "\n")
-                        sys.stdout.flush()
                     sys.stdout.write("---JUPY_PLOTS_END---\n")
-                    sys.stdout.flush()
 
             except SyntaxError as e:
                 err_msg = "".join(traceback.format_exception_only(type(e), e))
-                sys.stdout.write(f"---JUPY_STDERR_START---\n{err_msg}---JUPY_STDERR_END---\n")
-                sys.stdout.flush()
+                sys.stdout.write(f"---JUPY_STDERR---\n{err_msg}\n")
             except Exception as e:
                 tb = e.__traceback__.tb_next if e.__traceback__ else None
                 err_msg = "".join(traceback.format_exception(type(e), e, tb))
-                sys.stdout.write(f"---JUPY_STDERR_START---\n{err_msg}---JUPY_STDERR_END---\n")
-                sys.stdout.flush()
+                sys.stdout.write(f"---JUPY_STDERR---\n{err_msg}\n")
 
+            # Signal completion
             sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
             sys.stdout.flush()
 
     except Exception as e:
-        sys.stdout.write(f"---JUPY_STDERR_START---\nKernel error: {e}\n---JUPY_STDERR_END---\n")
-        sys.stdout.flush()
+        sys.stdout.write(f"---JUPY_STDERR---\nKernel error: {e}\n")
         sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
         sys.stdout.flush()
 """
 
 
 def _kill_process_tree(proc):
-    """Forcefully kills process tree instantly, without touching its
-    stdin/stdout/stderr pipe objects. Safe to call from any thread — including
-    while another thread is concurrently blocked reading/writing those pipes
-    — which is required for interrupt() to work instantly without waiting on
-    comm_lock (see KernelManager.force_interrupt)."""
+    """Forcefully kills process tree instantly."""
     if proc and proc.poll() is None:
         try:
             if sys.platform == "win32":
@@ -302,26 +374,7 @@ def _kill_process_tree(proc):
 
 
 def _reap_and_close(proc):
-    """Waits for an already-killed process to fully exit, then closes its
-    pipes. Run on a background thread by restart() (see below) so that
-    restart() itself stays instant — it never blocks waiting for comm_lock,
-    exactly like interrupt(), even if a cell is currently running.
-
-    Waiting for the process to actually exit before touching its pipes is
-    what makes this safe to do without holding any lock: once wait() returns,
-    the process (and both ends of its pipes) are fully torn down, so any
-    other thread that was blocked reading/writing them has already unblocked
-    on its own (a dead process's pipes surface as a normal, harmless EOF/
-    write-failure to whoever's using them — see execute()'s retry logic).
-
-    Without this cleanup, a killed process's pipe handles would otherwise get
-    closed implicitly and lazily by the garbage collector at some later,
-    unrelated point in the program. On Windows that deferred close can raise
-    "OSError: [Errno 22] Invalid argument" from inside a finalizer, which
-    Python can't propagate normally and instead prints as a scary-looking but
-    harmless "Exception ignored in: <_io.TextIOWrapper ...>" — closing things
-    ourselves, on our own schedule, avoids that entirely.
-    """
+    """Waits for an already-killed process to fully exit, then closes its pipes."""
     if proc is None:
         return
     try:
@@ -337,14 +390,13 @@ def _reap_and_close(proc):
 
 
 class KernelManager:
-    """Persistent Python Kernel Manager with instant non-blocking process
-    force-kill and a switchable backing environment (see core/envmanager.py)."""
+    """Persistent Python Kernel Manager with rich display support."""
 
     def __init__(self):
         self.exec_count = 0
         self.proc = None
         self.lock = threading.Lock()
-        self.comm_lock = threading.Lock()  # guards ALL stdin/stdout traffic with the worker
+        self.comm_lock = threading.Lock()
 
         self.env_info = envmanager.resolve_active_env(on_progress=print)
         self.python = self.env_info["python"]
@@ -396,9 +448,6 @@ class KernelManager:
                 self.proc = proc
 
     def get_completions(self, code, line, col):
-        """Sends completion request into worker kernel. Never blocks a
-        running cell — returns [] immediately if the kernel is busy, exactly
-        like real Jupyter/Colab do."""
         if not self.comm_lock.acquire(blocking=False):
             return []
 
@@ -435,7 +484,6 @@ class KernelManager:
             self.comm_lock.release()
 
     def get_hover(self, code, line, col):
-        """Sends hover request to worker kernel and returns info dict or None."""
         if not self.comm_lock.acquire(blocking=False):
             return None
 
@@ -472,7 +520,6 @@ class KernelManager:
             self.comm_lock.release()
 
     def force_interrupt(self):
-        """Forcefully kills running process instantly without waiting for thread locks."""
         proc = self.proc
         if proc and proc.poll() is None:
             _kill_process_tree(proc)
@@ -483,23 +530,6 @@ class KernelManager:
         return self.force_interrupt()
 
     def restart(self):
-        """Restarts kernel process (same env), wiping namespace state.
-
-        Kills the old process and spawns a new one immediately — this is
-        intentionally NOT gated on comm_lock, so it (and switch_env(), which
-        calls this) stay instant even while a cell is currently running,
-        exactly like interrupt(). The old process's pipes are reaped and
-        closed on a background thread once it has actually exited (see
-        _reap_and_close) instead of synchronously here or left for the
-        garbage collector.
-
-        Because this doesn't wait for comm_lock, there's an inherent tiny
-        window where execute() could grab a reference to the process being
-        killed right here and try to write to it. execute() handles that
-        itself by transparently respawning and retrying once — see below —
-        so switching environments never surfaces a "Kernel communication
-        error" to the user.
-        """
         old_proc = self.proc
         self.proc = None
         _kill_process_tree(old_proc)
@@ -509,8 +539,6 @@ class KernelManager:
         self._ensure_kernel_proc()
 
     def switch_env(self, mode, name=None, on_progress=None):
-        """Persists a new env choice for this folder, ensures it exists
-        (creating it on first use), and restarts the kernel against it."""
         self.env_info = envmanager.set_active_env(mode, name, on_progress=on_progress)
         self.python = self.env_info["python"]
         self.restart()
@@ -528,15 +556,13 @@ class KernelManager:
     def execute(self, code, ws_send_fn):
         self.exec_count += 1
 
+        # Split pip installs from code
         lines = code.splitlines()
         pip_cmds = []
         py_lines = []
-
-        # Faster pip detection using startswith and slicing
         for line in lines:
             stripped = line.strip()
             if stripped.startswith(('!pip install', '%pip install', 'pip install')):
-                # Remove leading ! or % and the "pip install" part
                 cmd = stripped.lstrip('!%').lstrip()
                 if cmd.startswith('pip install '):
                     clean_cmd = cmd[11:].strip()
@@ -573,11 +599,7 @@ class KernelManager:
                 current_proc.stdin.write(req)
                 current_proc.stdin.flush()
             except Exception:
-                # current_proc may have just been killed by a concurrent
-                # restart()/switch_env() call — those intentionally don't wait
-                # for comm_lock so they stay instant even mid-execution (see
-                # KernelManager.restart). Recover by respawning a fresh
-                # process and trying once more before giving up.
+                # Retry once if process died
                 self.proc = None
                 try:
                     self._ensure_kernel_proc()
@@ -589,9 +611,10 @@ class KernelManager:
                     ws_send_fn({"type": "complete", "exec_count": self.exec_count})
                     return
 
-            stderr_collecting = False
-            plots_collecting = False
+            # Read and parse output
+            collecting = None  # 'stdout', 'stderr', 'plots', 'display'
             plot_lines = []
+            display_data = []
 
             while current_proc:
                 try:
@@ -604,6 +627,7 @@ class KernelManager:
                         ws_send_fn({"type": "stderr", "text": "\n⏹ Execution force stopped by user.\n"})
                     break
 
+                # Check for markers
                 if line.startswith("---JUPY_STDIN_REQ:"):
                     prompt = line.replace("---JUPY_STDIN_REQ:", "").replace("---", "").strip()
                     ws_send_fn({"type": "stdin_request", "prompt": prompt})
@@ -612,29 +636,43 @@ class KernelManager:
                 if "---JUPY_CELL_COMPLETE---" in line:
                     break
 
-                if "---JUPY_STDERR_START---" in line:
-                    stderr_collecting = True
+                if "---JUPY_STDOUT---" in line:
+                    collecting = 'stdout'
                     continue
-                if "---JUPY_STDERR_END---" in line:
-                    stderr_collecting = False
+                if "---JUPY_STDERR---" in line:
+                    collecting = 'stderr'
                     continue
-
                 if "---JUPY_PLOTS_START---" in line:
-                    plots_collecting = True
+                    collecting = 'plots'
+                    plot_lines = []
                     continue
                 if "---JUPY_PLOTS_END---" in line:
-                    plots_collecting = False
+                    collecting = None
                     for p in plot_lines:
                         ws_send_fn({"type": "plot", "html": p})
                     plot_lines = []
                     continue
+                if "---JUPY_DISPLAY_DATA---" in line:
+                    # Next line is JSON MIME bundle
+                    json_line = current_proc.stdout.readline()
+                    try:
+                        mime_data = json.loads(json_line)
+                        ws_send_fn({"type": "display", "data": mime_data})
+                    except Exception:
+                        pass
+                    continue
 
-                if stderr_collecting:
-                    ws_send_fn({"type": "stderr", "text": line})
-                elif plots_collecting:
+                # Handle collected output
+                if collecting == 'stdout':
+                    if line.strip():
+                        ws_send_fn({"type": "stdout", "text": line})
+                elif collecting == 'stderr':
+                    if line.strip():
+                        ws_send_fn({"type": "stderr", "text": line})
+                elif collecting == 'plots':
                     plot_lines.append(line.strip())
                 else:
-                    # Skip sending empty lines to reduce WebSocket traffic
+                    # Normal stdout (not from marker)
                     if line.strip():
                         ws_send_fn({"type": "stdout", "text": line})
 

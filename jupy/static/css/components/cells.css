@@ -351,3 +351,61 @@
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+
+/* Markdown preview */
+.markdown-preview {
+  padding: 8px 12px;
+  font-family: var(--font-body);
+  line-height: 1.6;
+  color: var(--color-text);
+}
+.markdown-preview h1, h2, h3, h4, h5, h6 {
+  margin: 0.8em 0 0.4em;
+  font-weight: 800;
+}
+.markdown-preview p {
+  margin: 0.4em 0;
+}
+.markdown-preview ul, ol {
+  padding-left: 1.5em;
+}
+.markdown-preview code {
+  background: var(--color-bg-well);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+}
+.markdown-preview pre {
+  background: var(--color-bg-well);
+  padding: 0.8em;
+  overflow-x: auto;
+  border-radius: 4px;
+}
+/* Tables */
+.markdown-preview table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.8em 0;
+}
+.markdown-preview th, .markdown-preview td {
+  border: 1px solid var(--color-border);
+  padding: 4px 8px;
+  text-align: left;
+}
+.markdown-preview th {
+  background: var(--color-secondary);
+  color: #111827;
+}
+/* Plot containers */
+.plot-container {
+  margin: 6px 0;
+}
+/* Display data container */
+.display-data-container {
+  margin: 6px 0;
+  overflow-x: auto;
+}
+.display-data-container video, .display-data-container audio {
+  max-width: 100%;
+}

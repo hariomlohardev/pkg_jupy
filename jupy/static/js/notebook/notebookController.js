@@ -219,6 +219,27 @@ export function createNotebookController({ container, templates, runSocket, show
 
     runSocket.send({ action: 'run', code: cell.cm.getValue() });
   }
+  // Inside createNotebookController, add these functions:
+
+  function changeCellType(id, newType) {
+    const cell = getCell(id);
+    if (!cell || cell.type === newType) return;
+    const oldType = cell.type;
+    cell.type = newType;
+    // Update UI: editor mode, visibility, etc.
+    // For simplicity, we'll just refresh the cell editor.
+    // Actually we need to rebuild the editor for markdown/raw.
+    // This is a deep change. For now, we'll just change mode.
+    if (newType === 'markdown') {
+      cell.cm.setOption('mode', 'markdown');
+      // Set extraKeys to handle Shift-Enter rendering
+    } else if (newType === 'raw') {
+      cell.cm.setOption('mode', 'null');
+    } else { // code
+      cell.cm.setOption('mode', 'python');
+    }
+    // Update toolbar/UI
+  }
 
   function handleRunMessage(data) {
     if (!runningCellId) return;
