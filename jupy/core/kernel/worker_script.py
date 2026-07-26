@@ -251,6 +251,8 @@ def _run_magic(line, cell, namespace):
         return _magic_gc(args, cell, namespace)
     elif magic_name == 'cache':
         return _magic_cache(args, cell, namespace)
+    elif magic_name == 'pip':    # NEW: %pip magic
+        return _magic_pip(args, cell, namespace)
     else:
         return f"Unknown magic: {magic_name}"
 
@@ -603,14 +605,18 @@ def _magic_reset(args, cell, namespace):
     return "Namespace reset."
 
 def _magic_matplotlib(args, cell, namespace):
-    backend = args[0] if args else 'inline'
+    # Default to 'agg' (headless), map 'inline' to 'agg'
+    backend = 'agg'
+    if args:
+        req = args[0].strip()
+        if req.lower() == 'inline':
+            backend = 'agg'
+        else:
+            backend = req
     try:
         import matplotlib
         matplotlib.use(backend, force=True)
-        if backend != 'inline':
-            return f"Matplotlib backend set to '{backend}'. Note: only 'inline' is fully supported in headless mode."
-        else:
-            return "Matplotlib backend set to inline (Agg)."
+        return f"Matplotlib backend set to '{backend}' (headless mode)."
     except Exception as e:
         return f"Error setting backend: {e}"
 
@@ -717,8 +723,23 @@ def _magic_cache(args, cell, namespace):
     else:
         return "Invalid action. Use 'save' or 'load'."
 
+def _magic_pip(args, cell, namespace):
+    """%pip install <pkg> – install into the kernel's venv."""
+    if not args:
+        return "Usage: %pip install <package>"
+    # Build command using this Python interpreter
+    cmd = [sys.executable, "-m", "pip"] + args
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        output = (proc.stdout or "") + (proc.stderr or "")
+        return output or "Done."
+    except subprocess.TimeoutExpired:
+        return "pip install timed out (5 min limit)."
+    except Exception as e:
+        return f"Error: {e}"
+
 # ----------------------------------------------------------------------
-# Full ipywidgets system
+# Full ipywidgets system (unchanged)
 # ----------------------------------------------------------------------
 _widgets = {}
 _widget_counter = 0
@@ -1246,17 +1267,35 @@ while True:
                 else:
                     cmd = cmd_line
                 first_non_empty_idx = next(i for i, l in enumerate(lines) if l.strip())
-                try:
-                    proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
-                    if proc.stdout:
-                        sys.stdout.write("---JUPY_STDOUT---\n")
-                        sys.stdout.write(proc.stdout)
-                    if proc.stderr:
+                # Intercept pip commands to use sys.executable
+                if cmd.startswith('pip ') or cmd.startswith('pip3 '):
+                    pip_args = cmd.split()[1:]
+                    try:
+                        proc = subprocess.run(
+                            [sys.executable, "-m", "pip"] + pip_args,
+                            capture_output=True, text=True, timeout=300
+                        )
+                        if proc.stdout:
+                            sys.stdout.write("---JUPY_STDOUT---\n")
+                            sys.stdout.write(proc.stdout)
+                        if proc.stderr:
+                            sys.stdout.write("---JUPY_STDERR---\n")
+                            sys.stdout.write(proc.stderr)
+                    except Exception as e:
                         sys.stdout.write("---JUPY_STDERR---\n")
-                        sys.stdout.write(proc.stderr)
-                except Exception as e:
-                    sys.stdout.write("---JUPY_STDERR---\n")
-                    sys.stdout.write(str(e) + "\n")
+                        sys.stdout.write(str(e) + "\n")
+                else:
+                    try:
+                        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                        if proc.stdout:
+                            sys.stdout.write("---JUPY_STDOUT---\n")
+                            sys.stdout.write(proc.stdout)
+                        if proc.stderr:
+                            sys.stdout.write("---JUPY_STDERR---\n")
+                            sys.stdout.write(proc.stderr)
+                    except Exception as e:
+                        sys.stdout.write("---JUPY_STDERR---\n")
+                        sys.stdout.write(str(e) + "\n")
                 # Remove the command line from code
                 remaining_lines = lines[first_non_empty_idx+1:]
                 remaining_code = '\n'.join(remaining_lines)

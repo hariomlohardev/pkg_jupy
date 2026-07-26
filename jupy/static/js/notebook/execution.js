@@ -11,6 +11,21 @@ import {
   appendWidget
 } from '../cells/cellOutput.js';
 
+/** Render a markdown cell's content into its output area. */
+function renderMarkdownOutput(cell) {
+  const src = cell.cm.getValue();
+  clearCellOutput(cell);
+  if (!src.trim()) return;
+
+  let html = window.marked ? window.marked.parse(src) : `<pre>${src}</pre>`;
+  const div = document.createElement('div');
+  div.className = 'markdown-preview';
+  div.innerHTML = html;
+  cell.dom.outputEl.hidden = false;
+  cell.dom.outputEl.appendChild(div);
+  if (window.MathJax) MathJax.typesetPromise([div]).catch(() => {});
+}
+
 export function createExecution(state, runSocket, showToast, setStatus, operations, selection) {
   const { cells, indexOf, getCell, executionQueue } = state;
 
@@ -22,6 +37,26 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
       setStatus('idle');
       return;
     }
+
+    // ---------- Handle markdown cells locally ----------
+    if (cell.type === 'markdown') {
+      renderMarkdownOutput(cell);
+      cell.dom.root.classList.remove('queued', 'running');
+      cell.dom.runBtn.textContent = '▶';
+      cell.dom.runBtn.title = 'Run cell (Shift+Enter)';
+      cell.dom.execCountEl.textContent = '[ ]';
+      state.runningCellId = null;
+      setStatus('idle');
+
+      // Continue with any queued cells
+      if (executionQueue.length > 0) {
+        const nextId = executionQueue.shift();
+        executeNextInQueue(nextId);
+      }
+      return;
+    }
+
+    // ---------- Code cells (unchanged) ----------
     state.runningCellId = id;
     cell.dom.root.classList.remove('queued');
     cell.dom.root.classList.add('running');
@@ -62,6 +97,22 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
       console.warn('[Jupy] runCell: cell not found', id);
       return;
     }
+
+    // ---------- Markdown cells run immediately, no kernel call ----------
+    if (cell.type === 'markdown') {
+      renderMarkdownOutput(cell);
+      const idx = indexOf(id);
+      if (insertBelow && operations) {
+        operations.insertCellAt(idx + 1, '', { focus: true });
+      } else if (advance) {
+        advanceSelectionAfter(idx);
+      } else {
+        selection.selectCell(id);
+      }
+      return;
+    }
+
+    // ---------- Code cells (original logic) ----------
     if (!runSocket.isOpen) {
       showToast('⚠️ NOT CONNECTED TO KERNEL — RECONNECTING…', 'danger');
       return;
@@ -90,7 +141,6 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
     // Run now
     executeNextInQueue(id);
     if (insertBelow) {
-      // Safety check
       if (!operations) {
         console.error('[Jupy] insertBelow: operations is null!');
         return;

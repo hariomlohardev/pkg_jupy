@@ -15,14 +15,28 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
   const outputEl = frag.querySelector('.cell-output');
   const toolbar = frag.querySelector('.cell-toolbar');
 
-  const dragHandle = frag.querySelector('.cell-drag-handle');
-  if (dragHandle) {
-    dragHandle.draggable = true;
-    dragHandle.addEventListener('dragstart', (e) => {
+  // ---------- Markdown styling ----------
+  if (type === 'markdown') {
+    root.classList.add('cell-md');
+    // Hide the gutter (run button + execution count) entirely
+    const gutter = frag.querySelector('.cell-gutter');
+    if (gutter) gutter.style.display = 'none';
+    // Optionally hide the drag handle for a cleaner look
+    const dragHandle = frag.querySelector('.cell-drag-handle');
+    if (dragHandle) dragHandle.style.display = 'none';
+    // Make the toolbar always visible but less intrusive
+    toolbar.style.opacity = '0.5';
+    toolbar.style.marginTop = '4px';
+  }
+
+  const dragHandleEl = frag.querySelector('.cell-drag-handle');
+  if (dragHandleEl) {
+    dragHandleEl.draggable = true;
+    dragHandleEl.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('text/plain', id);
       if (hooks.onDragStart) hooks.onDragStart(id, e);
     });
-    dragHandle.addEventListener('dragend', (e) => {
+    dragHandleEl.addEventListener('dragend', (e) => {
       if (hooks.onDragEnd) hooks.onDragEnd(e);
     });
   }
@@ -36,7 +50,7 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
     execCount: null,
     outputs: [],
     isPreview: false,
-    dom: { root, runBtn, execCountEl, editorHost, outputEl, toolbar, insertBar, dragHandle },
+    dom: { root, runBtn, execCountEl, editorHost, outputEl, toolbar, insertBar, dragHandle: dragHandleEl },
     cm: null,
     language: 'python',
   };
@@ -57,9 +71,6 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
     autoCloseBrackets: true,
     extraKeys: {
       'Shift-Enter': (editor) => {
-        if (cell.type === 'markdown') {
-          renderMarkdown(cell);
-        }
         hooks.onRun(cell.id, { advance: true });
       },
       'Ctrl-Enter': (editor) => {
@@ -107,7 +118,7 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
     }
   });
 
-  // ---- MARKDOWN DOUBLE-CLICK ----
+  // ---- MARKDOWN DOUBLE-CLICK (toggle inline preview) ----
   if (cell.type === 'markdown') {
     root.addEventListener('dblclick', () => setMarkdownEdit(cell));
   }
@@ -126,19 +137,15 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
 
   // ---- CLICK TO SELECT ----
   root.addEventListener('click', (e) => {
-    if (!editorHost.contains(e.target) && !dragHandle?.contains(e.target)) {
+    if (!editorHost.contains(e.target) && !dragHandleEl?.contains(e.target)) {
       hooks.onSelect(cell.id);
     }
   });
 
-  // ---- RUN BUTTON ----
+  // ---- RUN BUTTON (hidden for md) ----
   runBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (cell.type === 'markdown' && cell.isPreview) {
-      renderMarkdown(cell);
-    } else {
-      hooks.onRunButtonClick(cell.id);
-    }
+    hooks.onRunButtonClick(cell.id);
   });
 
   // ---- TOOLBAR ACTIONS ----
@@ -160,7 +167,7 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
     hooks.onInsertAfter(cell.id);
   });
 
-  // ---- MARKDOWN HELPERS ----
+  // ---- MARKDOWN HELPERS (inline preview via double-click) ----
   function renderMarkdown(cell) {
     if (cell.type !== 'markdown') return;
     const src = cell.cm.getValue();
