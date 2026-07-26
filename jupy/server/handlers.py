@@ -15,7 +15,7 @@ from jupy.core import envmanager
 from jupy.core.metrics import get_system_metrics
 from jupy.core.terminal import TerminalSession
 from jupy.core.venv import get_python_version, install_package, list_packages, uninstall_package
-from jupy.server.protocol import make_ws_accept, make_ws_frame, parse_ws_frame
+from jupy.server.protocol import make_ws_accept, make_ws_frame, parse_ws_frame, make_ws_pong
 
 STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
 VENV_DIR = os.path.abspath(".jupy_env")
@@ -346,7 +346,6 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
 
     # ---- EXPORT METHODS (unchanged) ----
     def _export_to_html(self, notebook_json, for_pdf=False):
-        # ... same as before ...
         cells = notebook_json.get("cells", [])
         html_content = """<!DOCTYPE html>
 <html>
@@ -420,8 +419,14 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 lines.append("```python\n" + cell.get("source", "") + "\n```")
         return "\n\n".join(lines)
 
-   
-    # ---- WEBSOCKET HANDLERS ----
+    # ---- WEBSOCKET HANDLERS (with pong support) ----
+    def _ws_handle_ping(self, payload):
+        try:
+            self.wfile.write(make_ws_pong(payload))
+            self.wfile.flush()
+        except:
+            pass
+
     def handle_metrics_ws(self):
         ws_lock = threading.Lock()
         def stream_loop():
@@ -440,6 +445,8 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
             msg, opcode = parse_ws_frame(self.rfile)
             if opcode == 0x8 or msg is None:
                 break
+            if opcode == 0x9:
+                self._ws_handle_ping(msg)
 
     def handle_run_ws(self):
         ws_lock = threading.Lock()
@@ -461,17 +468,15 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 ws_send({"type": "error", "message": f"Kernel failed to start: {str(e)}"})
             except:
                 pass
-            try:
-                self.wfile.write(make_ws_frame(json.dumps({"type": "error", "message": "Kernel unavailable"})))
-                self.wfile.flush()
-            except:
-                pass
             return
 
         while True:
             msg, opcode = parse_ws_frame(self.rfile)
             if opcode == 0x8 or msg is None:
                 break
+            if opcode == 0x9:
+                self._ws_handle_ping(msg)
+                continue
             try:
                 req = json.loads(msg)
                 action = req.get("action")
@@ -486,6 +491,9 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 elif action == "stdin_reply":
                     val = req.get("value", "")
                     kernel.handle_stdin_reply(val)
+                elif action == "widget_event":
+                    # Forward to kernel worker
+                    kernel.send_to_worker(req)
             except Exception as e:
                 print(f"[Jupy] Error in WebSocket message: {e}", flush=True)
                 import traceback
@@ -536,6 +544,9 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 except Exception:
                     pass
                 break
+            if opcode == 0x9:
+                self._ws_handle_ping(msg)
+                continue
             try:
                 data = json.loads(msg)
                 if data.get("type") == "input":
@@ -555,6 +566,8 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 msg, opcode = parse_ws_frame(self.rfile)
                 if opcode == 0x8 or msg is None:
                     break
+                if opcode == 0x9:
+                    self._ws_handle_ping(msg)
             return
 
         class NotebookFileHandler(watchdog.events.FileSystemEventHandler):
@@ -576,6 +589,8 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 observer.stop()
                 observer.join()
                 break
+            if opcode == 0x9:
+                self._ws_handle_ping(msg)
 
     def handle_debugger_ws(self):
         kernel = get_kernel()
@@ -587,6 +602,9 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
             if opcode == 0x8 or msg is None:
                 kernel.set_debugger_ws(None)
                 break
+            if opcode == 0x9:
+                self._ws_handle_ping(msg)
+                continue
             try:
                 req = json.loads(msg)
                 action = req.get("action")

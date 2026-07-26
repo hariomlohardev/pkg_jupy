@@ -1,3 +1,5 @@
+import { parseNotebookFile } from './notebook/notebookFile.js';
+
 export function initFileBrowser(container) {
     const panel = document.createElement('div');
     panel.id = 'file-browser-panel';

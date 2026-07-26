@@ -28,17 +28,35 @@ export function initCommandPalette(notebook) {
         { name: 'Insert Code Cell Below', action: () => notebook.insertCellAt(notebook.getCells().length, '', { focus: true }) },
         { name: 'Insert Markdown Cell Below', action: () => notebook.insertCellAt(notebook.getCells().length, '', { focus: true, type: 'markdown' }) },
         { name: 'Toggle Line Numbers', action: () => notebook.toggleLineNumbers() },
-        { name: 'Toggle Theme', action: () => document.getElementById('btn-theme-toggle').click() },
-        { name: 'Toggle Terminal', action: () => document.getElementById('btn-terminal-toggle').click() },
+        { name: 'Toggle Theme', action: () => {
+            const btn = document.getElementById('btn-theme-toggle');
+            if (btn) btn.click();
+        }},
+        { name: 'Toggle Terminal', action: () => {
+            const btn = document.getElementById('btn-terminal-toggle');
+            if (btn) btn.click();
+        }},
         { name: 'Toggle Zen Mode', action: () => window.toggleZenMode ? window.toggleZenMode() : null },
         { name: 'Restart Kernel', action: () => notebook.restartKernel() },
         { name: 'Interrupt Kernel', action: () => notebook.interruptKernel() },
         { name: 'Merge Selected Cells', action: () => notebook.mergeSelectedCells() },
         { name: 'Split Cell at Cursor', action: () => { const id = notebook.getSelectedId(); if (id) notebook.splitCellAtCursor(id); } },
-        { name: 'Toggle Variable Explorer', action: () => document.querySelector('[title="Toggle Variable Explorer"]').click() },
-        { name: 'Toggle Debugger', action: () => document.querySelector('[title="Toggle Debugger"]').click() },
-        { name: 'Toggle File Browser', action: () => document.querySelector('[title="Toggle File Browser"]').click() },
-        { name: 'Hyperparameter Tuning', action: () => document.querySelector('[title="Hyperparameter Tuning"]').click() },
+        { name: 'Toggle Variable Explorer', action: () => {
+            const btn = document.querySelector('[title="Toggle Variable Explorer"]');
+            if (btn) btn.click();
+        }},
+        { name: 'Toggle Debugger', action: () => {
+            const btn = document.querySelector('[title="Toggle Debugger"]');
+            if (btn) btn.click();
+        }},
+        { name: 'Toggle File Browser', action: () => {
+            const btn = document.querySelector('[title="Toggle File Browser"]');
+            if (btn) btn.click();
+        }},
+        { name: 'Hyperparameter Tuning', action: () => {
+            const btn = document.querySelector('[title="Hyperparameter Tuning"]');
+            if (btn) btn.click();
+        }},
     ];
 
     function filterCommands(query) {

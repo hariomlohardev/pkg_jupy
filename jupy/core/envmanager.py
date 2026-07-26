@@ -40,8 +40,8 @@ JUPY_SERVER_DEPENDENCIES = ["psutil"]
 # just Jedi, needed in-process by the kernel worker for autocomplete against
 # the user's actual installed packages/namespace). Filtered back out of the
 # Pip Manager's package list so they don't clutter the user's view.
-JUPY_ENV_DEPENDENCIES = ["jedi"]
-JUPY_INTERNAL_PACKAGE_NAMES = {"pip", "setuptools", "wheel", "jedi", "parso"}
+JUPY_ENV_DEPENDENCIES = ["jedi", "psutil"]
+JUPY_INTERNAL_PACKAGE_NAMES = {"pip", "setuptools", "wheel", "jedi", "parso", "psutil"}
 
 DEFAULT_ENV_NAME = "default"
 PROJECT_CONFIG_DIR = ".jupy"
@@ -136,15 +136,6 @@ def _interpreter_paths(env_dir):
 
 
 def _venv_is_valid(env_dir):
-    """A venv directory is only really usable if its interpreter actually
-    exists on disk. A directory that exists but is missing this — most often
-    the result of an earlier venv.create() call that was interrupted, or
-    files removed by antivirus software right after creation — is NOT valid,
-    and must be recreated rather than reused as-is forever. Reusing a broken
-    venv like this is what used to make jupy silently spawn a kernel process
-    that could never start, surfacing downstream as a confusing "Kernel
-    communication error: [Errno 22] Invalid argument" the moment a cell tried
-    to run."""
     python, _ = _interpreter_paths(env_dir)
     return os.path.isfile(python)
 
