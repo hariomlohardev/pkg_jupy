@@ -256,9 +256,71 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 notebook_json = data.get("notebook", {})
                 html_out = self._export_to_html(notebook_json, for_pdf=True)
                 self._send_json({"html": html_out})
+            # ---- F1: AUTOSAVE (write notebook to disk) ----
+            elif self.path == "/api/files/save":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                name = (data.get("name") or "Untitled.ipynb").strip()
+                content = data.get("content", "")
+                safe = "".join(c for c in name if c.isalnum() or c in ("-", "_", ".")).strip(".") or "Untitled.ipynb"
+                if not safe.endswith(".ipynb"):
+                    safe += ".ipynb"
+                full = os.path.abspath(os.path.join(os.getcwd(), safe))
+                if os.path.commonpath([os.path.realpath(os.getcwd()), os.path.realpath(full)]) != os.path.realpath(os.getcwd()):
+                    self._send_json({"success": False, "error": "Access denied"})
+                else:
+                    try:
+                        with open(full, "w", encoding="utf-8") as f:
+                            f.write(content)
+                        self._send_json({"success": True, "path": safe})
+                    except Exception as e:
+                        self._send_json({"success": False, "error": str(e)})
+
+            # ---- F2: CHECKPOINTS ----
+            elif self.path == "/api/checkpoints/save":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                name = (data.get("name") or "Untitled").strip().replace(".ipynb", "")
+                content = data.get("content", "")
+                cp_dir = os.path.join(os.getcwd(), ".jupy", "checkpoints")
+                try:
+                    os.makedirs(cp_dir, exist_ok=True)
+                    stamp = time.strftime("%Y%m%d-%H%M%S")
+                    fname = f"{name}-{stamp}.ipynb"
+                    with open(os.path.join(cp_dir, fname), "w", encoding="utf-8") as f:
+                        f.write(content)
+                    self._send_json({"success": True, "checkpoint": fname})
+                except Exception as e:
+                    self._send_json({"success": False, "error": str(e)})
+
+            elif self.path == "/api/checkpoints/list":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                name = (data.get("name") or "Untitled").strip().replace(".ipynb", "")
+                cp_dir = os.path.join(os.getcwd(), ".jupy", "checkpoints")
+                try:
+                    items = sorted(
+                        [f for f in os.listdir(cp_dir) if f.startswith(name) and f.endswith(".ipynb")],
+                        reverse=True,
+                    ) if os.path.isdir(cp_dir) else []
+                    self._send_json({"checkpoints": items})
+                except Exception as e:
+                    self._send_json({"checkpoints": [], "error": str(e)})
+
+            elif self.path == "/api/checkpoints/restore":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                fname = (data.get("checkpoint") or "").strip()
+                cp_dir = os.path.realpath(os.path.join(os.getcwd(), ".jupy", "checkpoints"))
+                full = os.path.realpath(os.path.join(cp_dir, fname))
+                if not fname or os.path.commonpath([cp_dir, full]) != cp_dir or not os.path.isfile(full):
+                    self._send_json({"success": False, "error": "Invalid checkpoint"})
+                else:
+                    try:
+                        with open(full, "r", encoding="utf-8") as f:
+                            self._send_json({"success": True, "content": f.read()})
+                    except Exception as e:
+                        self._send_json({"success": False, "error": str(e)})
 
             else:
                 self.send_error(404, "Endpoint not found")
+
 
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             return

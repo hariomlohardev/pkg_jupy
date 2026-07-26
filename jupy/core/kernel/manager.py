@@ -225,13 +225,6 @@ class KernelManager:
         exec_count = self.exec_count
 
         with self.comm_lock:
-            try:
-                self._ensure_kernel_proc()
-            except Exception as e:
-                ws_send_fn({"type": "stderr", "text": f"Kernel failed to start: {e}"})
-                ws_send_fn({"type": "complete", "exec_count": exec_count})
-                return
-
             proc = self.proc
             if proc is None or proc.poll() is not None:
                 ws_send_fn({"type": "stderr", "text": "Kernel not running. Restart required."})
@@ -247,113 +240,100 @@ class KernelManager:
                 return
 
             completed_normally = False
-            timed_out = threading.Event()
-            timer = None
-
-            if timeout:
-                def _kill_on_timeout():
-                    timed_out.set()
-                    _kill_process_tree(proc)
-
-                timer = threading.Timer(timeout, _kill_on_timeout)
-                timer.daemon = True
-                timer.start()
-
-            stream = None
-            in_plots = False
+            stream = "stdout"          # A1: which stream content lines belong to
+            in_plots = False           # A2: plot accumulation
             plot_lines = []
+            elapsed = None             # A4: per-cell timing
 
-            try:
-                while proc.poll() is None:
-                    line = proc.stdout.readline()
-                    if not line:
-                        break
+            while proc.poll() is None:
+                line = proc.stdout.readline()
+                if not line:
+                    break
+                line = line.rstrip('\n')
 
-                    line = line.rstrip('\n')
+                # ---- A1: stream markers ----
+                if line.startswith("---JUPY_STDOUT---"):
+                    stream = "stdout"
+                    continue
+                elif line.startswith("---JUPY_STDERR---"):
+                    stream = "stderr"
+                    continue
 
-                    if line == "---JUPY_STDOUT---":
-                        stream = "stdout"
-                        continue
+                # ---- A2: plot block ----
+                elif line.startswith("---JUPY_PLOTS_START---"):
+                    in_plots = True
+                    plot_lines = []
+                    continue
+                elif line.startswith("---JUPY_PLOTS_END---"):
+                    in_plots = False
+                    if plot_lines:
+                        ws_send_fn({"type": "plot", "html": "\n".join(plot_lines)})
+                    continue
+                elif in_plots:
+                    plot_lines.append(line)
+                    continue
 
-                    if line == "---JUPY_STDERR---":
-                        stream = "stderr"
-                        continue
+                # ---- A4: timing marker (comes right before COMPLETE) ----
+                elif line.startswith("---JUPY_CELL_ELAPSED:"):
+                    val = line[len("---JUPY_CELL_ELAPSED:"):].strip()
+                    if val.endswith("---"):
+                        val = val[:-3]
+                    try:
+                        elapsed = float(val)
+                    except Exception:
+                        elapsed = None
+                    continue
 
-                    if line == "---JUPY_PLOTS_START---":
-                        in_plots = True
-                        plot_lines = []
-                        continue
-
-                    if line == "---JUPY_PLOTS_END---":
-                        in_plots = False
-                        if plot_lines:
-                            ws_send_fn({"type": "plot", "html": "\n".join(plot_lines)})
-                        continue
-
-                    if in_plots:
-                        plot_lines.append(line)
-                        continue
-
-                    if line.startswith("---JUPY_DISPLAY_DATA---"):
-                        data_line = proc.stdout.readline().strip()
+                # ---- E1: debugger paused -> forward to debugger websocket ----
+                elif line.startswith("---JUPY_DEBUGGER_PAUSED:"):
+                    payload = line[len("---JUPY_DEBUGGER_PAUSED:"):]
+                    if payload.endswith("---"):
+                        payload = payload[:-3]
+                    if self._debugger_ws:
                         try:
-                            mime = json.loads(data_line)
-                            ws_send_fn({"type": "display", "data": mime})
+                            self._debugger_ws(json.loads(payload))
                         except Exception:
                             pass
-                        continue
+                    continue
 
-                    if line.startswith("---JUPY_WIDGET---"):
-                        widget_line = proc.stdout.readline().strip()
-                        try:
-                            widget_msg = json.loads(widget_line)
-                            ws_send_fn({"type": "widget", "data": widget_msg})
-                        except Exception:
-                            pass
-                        continue
+                # ---- existing markers (unchanged) ----
+                elif line.startswith("---JUPY_DISPLAY_DATA---"):
+                    data_line = proc.stdout.readline().strip()
+                    try:
+                        ws_send_fn({"type": "display", "data": json.loads(data_line)})
+                    except Exception:
+                        pass
+                elif line.startswith("---JUPY_WIDGET---"):
+                    widget_line = proc.stdout.readline().strip()
+                    try:
+                        ws_send_fn({"type": "widget", "data": json.loads(widget_line)})
+                    except Exception:
+                        pass
+                elif line.startswith("---JUPY_STDIN_REQ:"):
+                    prompt = line.split("---JUPY_STDIN_REQ:")[1].split("---")[0]
+                    ws_send_fn({"type": "stdin_request", "prompt": prompt})
+                elif line.startswith("---JUPY_LOAD_CELL---"):
+                    load_line = proc.stdout.readline().strip()
+                    try:
+                        ws_send_fn({"type": "load", "data": {"content": json.loads(load_line)["content"]}})
+                    except Exception:
+                        pass
 
-                    if line.startswith("---JUPY_STDIN_REQ:"):
-                        prompt = line.split("---JUPY_STDIN_REQ:")[1].split("---")[0]
-                        ws_send_fn({"type": "stdin_request", "prompt": prompt})
-                        continue
+                # ---- completion ----
+                elif "---JUPY_CELL_COMPLETE---" in line:
+                    msg = {"type": "complete", "exec_count": exec_count}
+                    if elapsed is not None:
+                        msg["elapsed"] = elapsed
+                    ws_send_fn(msg)
+                    completed_normally = True
+                    return
 
-                    if line.startswith("---JUPY_LOAD_CELL---"):
-                        load_line = proc.stdout.readline().strip()
-                        try:
-                            content = json.loads(load_line)["content"]
-                            ws_send_fn({"type": "load", "data": {"content": content}})
-                        except Exception:
-                            pass
-                        continue
-
-                    if line.startswith("---JUPY_DEBUGGER_PAUSED:"):
-                        payload = line[len("---JUPY_DEBUGGER_PAUSED:"):]
-                        if payload.endswith("---"):
-                            payload = payload[:-3]
-                        if self._debugger_ws:
-                            try:
-                                self._debugger_ws(json.loads(payload))
-                            except Exception:
-                                pass
-                        continue
-
-                    if "---JUPY_CELL_COMPLETE---" in line:
-                        ws_send_fn({"type": "complete", "exec_count": exec_count})
-                        completed_normally = True
-                        return
-
-                    if stream:
-                        ws_send_fn({"type": stream, "text": line + "\n"})
-
-            finally:
-                if timer:
-                    timer.cancel()
+                # ---- A1: normal content, routed by stream, blanks preserved ----
+                else:
+                    ws_send_fn({"type": stream, "text": line + "\n"})
 
             if not completed_normally:
-                if timed_out.is_set():
-                    ws_send_fn({"type": "stderr", "text": f"\n⏱ Execution timed out after {timeout}s.\n"})
-                else:
-                    ws_send_fn({"type": "stderr", "text": "\n⏹ Execution interrupted by user.\n"})
+                ws_send_fn({"type": "stderr", "text": "\n⏹ Execution interrupted by user.\n"})
                 ws_send_fn({"type": "complete", "exec_count": exec_count})
 
     def _execute_other_language(self, code, ws_send_fn, language, timeout, exec_count):
@@ -479,22 +459,17 @@ class KernelManager:
         self._send_debugger_command("stop")
 
     def _send_debugger_command(self, cmd, arg=None):
-        with self.comm_lock:
-            try:
-                proc = self.proc
-                if proc is None or proc.poll() is not None:
-                    return
-                data = {"action": "debugger", "cmd": cmd}
-                if arg:
-                    data["arg"] = arg
-                req = json.dumps(data) + "\n"
-                proc.stdin.write(req)
-                proc.stdin.flush()
-                while proc and proc.poll() is None:
-                    line = proc.stdout.readline()
-                    if not line:
-                        break
-                    if "---JUPY_DEBUGGER_ACK---" in line:
-                        break
-            except Exception:
-                pass
+        # NOTE: deliberately does NOT take comm_lock and does NOT read stdout.
+        # During a breakpoint the execute() thread owns comm_lock + stdout;
+        # the worker's trace function reads stdin directly while paused.
+        proc = self.proc
+        if proc is None or proc.poll() is not None:
+            return
+        data = {"action": "debugger", "cmd": cmd}
+        if arg:
+            data["arg"] = arg
+        try:
+            proc.stdin.write(json.dumps(data) + "\n")
+            proc.stdin.flush()
+        except Exception:
+            pass

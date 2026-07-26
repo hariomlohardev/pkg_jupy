@@ -6,11 +6,9 @@ export function createUndoRedo(state, operations, selection) {
       case 'insert':
         operations.deleteCell(op.data.cellId, true);
         break;
-
       case 'delete':
         operations.insertCellAt(op.data.index, op.data.source, { type: op.data.type, silent: true });
         break;
-
       case 'move': {
         const idx = state.indexOf(op.data.id);
         if (idx !== -1) {
@@ -20,31 +18,22 @@ export function createUndoRedo(state, operations, selection) {
         }
         break;
       }
-
       case 'merge': {
         const firstCell = state.getCell(op.data.first);
-        if (firstCell) {
-          firstCell.cm.setValue(op.data.before);
-        }
-
+        if (firstCell) firstCell.cm.setValue(op.data.before);
+        // B1: re-insert removed cells in their ORIGINAL order, forward.
         const removedData = op.data.removedData || [];
         let insertIdx = state.indexOf(op.data.first) + 1;
-
         for (const data of removedData) {
           operations.insertCellAt(insertIdx, data.source, { type: data.type, silent: true });
           insertIdx++;
         }
         break;
       }
-
       case 'split': {
         const original = state.getCell(op.data.id);
-        if (original) {
-          original.cm.setValue(op.data.before + '\n' + op.data.after);
-        }
-        if (op.data.newId) {
-          operations.deleteCell(op.data.newId, true);
-        }
+        if (original) original.cm.setValue(op.data.before + '\n' + op.data.after);
+        if (op.data.newId) operations.deleteCell(op.data.newId, true);
         break;
       }
     }
@@ -55,13 +44,11 @@ export function createUndoRedo(state, operations, selection) {
       case 'insert':
         operations.insertCellAt(op.data.index, op.data.source, { type: op.data.type, silent: true });
         break;
-
       case 'delete': {
         const cell = state.cells[op.data.index];
         if (cell) operations.deleteCell(cell.id, true);
         break;
       }
-
       case 'move': {
         const idx = state.indexOf(op.data.id);
         if (idx !== -1) {
@@ -71,20 +58,16 @@ export function createUndoRedo(state, operations, selection) {
         }
         break;
       }
-
       case 'merge': {
         const firstCell = state.getCell(op.data.first);
         if (firstCell) {
-          const removedIds = op.data.removed || [];
-          removedIds.forEach(id => {
-            const cell = state.getCell(id);
-            if (cell) operations.deleteCell(id, true);
+          (op.data.removed || []).forEach(id => {
+            if (state.getCell(id)) operations.deleteCell(id, true);
           });
           firstCell.cm.setValue(op.data.after);
         }
         break;
       }
-
       case 'split': {
         const original = state.getCell(op.data.id);
         if (original) {

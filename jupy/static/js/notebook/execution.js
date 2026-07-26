@@ -10,6 +10,7 @@ import {
   appendDisplayData,
   appendWidget
 } from '../cells/cellOutput.js';
+import { applyCollapsibleHeadings } from '../ui/collapsibleHeadings.js';
 
 /** Render a markdown cell's content into its output area. */
 function renderMarkdownOutput(cell) {
@@ -22,6 +23,7 @@ function renderMarkdownOutput(cell) {
   div.innerHTML = html;
   cell.dom.outputEl.hidden = false;
   cell.dom.outputEl.appendChild(div);
+  applyCollapsibleHeadings(div);
   if (window.MathJax) MathJax.typesetPromise([div]).catch(() => {});
 }
 
@@ -199,7 +201,9 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
       cell.dom.runBtn.textContent = '▶';
       cell.dom.runBtn.title = 'Run cell (Shift+Enter)';
       cell.execCount = data.exec_count;
-      cell.dom.execCountEl.textContent = `[${cell.execCount}]`;
+      cell.dom.execCountEl.textContent = data.elapsed != null
+        ? `[${cell.execCount}] · ${data.elapsed < 0.001 ? (data.elapsed*1000).toFixed(0)+'ms' : data.elapsed.toFixed(2)+'s'}`
+        : `[${cell.execCount}]`;
       state.runningCellId = null;
       setStatus('idle');
       if (executionQueue.length > 0) {

@@ -5,6 +5,7 @@ export function serializeNotebook(cells) {
     metadata: {
       kernelspec: { display_name: 'Python 3 (Jupy)', language: 'python', name: 'python3' },
       language_info: { name: 'python', pygments_lexer: 'ipython3' },
+      jupy: { notes: (typeof window !== 'undefined' && window.__jupy_notes) || '' },
     },
     cells: cells.map((cell) => {
       const lines = cell.cm.getValue().split('\n');
@@ -50,13 +51,14 @@ export function downloadNotebook(cells, filename) {
 export function parseNotebookFile(fileText) {
   const data = JSON.parse(fileText);
   const rawCells = Array.isArray(data.cells) ? data.cells : [];
-  return rawCells.map((c) => {
+  const cells = rawCells.map((c) => {
     const cellType = c.cell_type || 'code';
     const source = Array.isArray(c.source) ? c.source.join('') : (c.source || '');
     return { type: cellType, source };
   });
+  cells.__notes = (data.metadata && data.metadata.jupy && data.metadata.jupy.notes) || '';
+  return cells;
 }
-
 export function readFileAsText(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

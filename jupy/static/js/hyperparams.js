@@ -1,9 +1,9 @@
-export function initHyperparams(notebook) {
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-secondary';
-    btn.textContent = '🎛️';
-    btn.title = 'Hyperparameter Tuning';
-    btn.addEventListener('click', () => {
+export function initHyperparams(notebook, activityBar) {
+    activityBar.registerAction({
+      id: 'tune',
+      icon: '🎛️',
+      title: 'Hyperparameter Tuning',
+      onTrigger: () => {
         const selectedId = notebook.getSelectedId();
         if (!selectedId) return;
         const cell = notebook.getCells().find(c => c.id === selectedId);
@@ -29,8 +29,8 @@ export function initHyperparams(notebook) {
             return;
         }
         showHyperparamsDialog(cell, params);
+      },
     });
-    document.querySelector('.topbar-actions').appendChild(btn);
 
    function toPythonLiteral(value) {
      if (typeof value === 'boolean') return value ? 'True' : 'False';

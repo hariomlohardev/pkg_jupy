@@ -3,6 +3,7 @@
  * Builds code, markdown, and raw cells with drag handle and line number support.
  */
 import { moveLineUp, moveLineDown, toggleComment } from './editorCommands.js';
+import { applyCollapsibleHeadings } from '../ui/collapsibleHeadings.js';
 
 export function createCell(id, source, templates, hooks, registerAutocomplete, type = 'code') {
   const { cellTemplate, insertBarTemplate } = templates;
@@ -255,6 +256,7 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
     editorHost.innerHTML = '';
     editorHost.appendChild(previewDiv);
     cell.isPreview = true;
+    applyCollapsibleHeadings(previewDiv);
     if (window.MathJax) {
       MathJax.typesetPromise([previewDiv]).catch(() => {});
     }

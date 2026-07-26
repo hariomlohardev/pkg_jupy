@@ -15,9 +15,7 @@ export function createOperations(state, buildCell, reorderDom, selectCell, showT
       selectCell(cell.id);
     }
     cell.dom.root.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    if (!silent) {
-      pushOperation({ type: 'insert', data: { index, cellId: cell.id, source, type } });
-    }
+    if (!silent) pushOperation({ type: 'insert', data: { index, cellId: cell.id, source, type } });
     return cell;
   }
 
@@ -42,7 +40,7 @@ export function createOperations(state, buildCell, reorderDom, selectCell, showT
     state.selectedIds = state.selectedIds.filter(cid => cid !== id);
     if (cells.length === 0) {
       insertCellAt(0, '', { focus: true, silent: true });
-     } else {
+    } else {
       const newIdx = Math.min(idx, cells.length - 1);
       selectCell(cells[newIdx].id);
     }
@@ -74,12 +72,14 @@ export function createOperations(state, buildCell, reorderDom, selectCell, showT
     let mergedContent = '';
     const removedIds = [];
     const removedData = [];
+    for (let i = 1; i < indices.length; i++) {
+      const cell = cells[indices[i]];
+      removedData.push({ source: cell.cm.getValue(), type: cell.type });
+    }
     for (let i = indices.length - 1; i > 0; i--) {
-      const idx = indices[i];
-      const cell = cells[idx];
+      const cell = cells[indices[i]];
       mergedContent = cell.cm.getValue() + '\n' + mergedContent;
       removedIds.push(cell.id);
-      removedData.push({ source: cell.cm.getValue(), type: cell.type });
       deleteCell(cell.id, true);
     }
     const firstCell = cells[firstIdx];

@@ -1,6 +1,5 @@
 /**
- * app.js – Main entry point
- * Imports from the 'app' folder for modularity.
+ * app.js – Main entry point (activity-rail wiring consolidated)
  */
 import { initTheme } from './theme/theme.js';
 import { initMetricsStream } from './metrics/metrics.js';
@@ -21,14 +20,20 @@ import { initExportDropdown } from './app/export.js';
 import { initEditDropdown } from './app/edit.js';
 import { initCommandPalette } from './commandPalette.js';
 import { initZenMode } from './zenMode.js';
-import { initFileBrowser } from './fileBrowser.js';
 import { initGitIntegration } from './gitIntegration.js';
 import { initCellFolding } from './cellFolding.js';
+import { initTqdmIntegration } from './tqdmIntegration.js';
+import { appendCellOutput } from './cells/cellOutput.js';
+// ---- Activity rail + rail-mounted modules ----
+import { initActivityBar } from './activityBar.js';
+import { initFileBrowser } from './fileBrowser.js';
 import { initVariableExplorer } from './variableExplorer.js';
 import { initDebugger } from './debugger.js';
 import { initHyperparams } from './hyperparams.js';
-import { initTqdmIntegration } from './tqdmIntegration.js';
-import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
+import { initSessionNotes } from './ui/sessionNotes.js';
+import { initCheckpoints } from './persistence/checkpoints.js';
+// OPTIONAL — uncomment only if static/js/persistence/autosave.js exists:
+// import { initAutosave } from './persistence/autosave.js';
 
 (() => {
   // ===== DOM Elements =====
@@ -82,10 +87,8 @@ import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
   const outlineListEl = document.getElementById('outline-list');
   const cellTemplate = document.getElementById('cell-template');
   const insertBarTemplate = document.getElementById('insert-bar-template');
-
   const showToast = createToaster(toastContainer);
-  
-  // FIX #5: Expose appendCellOutput globally so tqdmIntegration.js can wrap it
+
   window.appendCellOutput = appendCellOutput;
 
   // ===== Theme & Metrics =====
@@ -98,27 +101,17 @@ import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
   const runSocket = new ReconnectingSocket('/ws/run', {
     onMessage: (data) => {
       if (data.type === 'widget') {
-        if (window.__jupy_widgetManager) {
-          window.__jupy_widgetManager.handleMessage(data.data);
-        }
+        if (window.__jupy_widgetManager) window.__jupy_widgetManager.handleMessage(data.data);
+      } else {
+        notebook?.handleRunMessage(data);
       }
-      notebook?.handleRunMessage(data);
     },
     onOpen: () => {
-      if (reconnectToastShown) {
-        showToast('🔄 KERNEL RECONNECTED', 'success');
-        reconnectToastShown = false;
-      }
+      if (reconnectToastShown) { showToast('🔄 KERNEL RECONNECTED', 'success'); reconnectToastShown = false; }
     },
     onClose: () => {
-      if (!reconnectToastShown) {
-        showToast('⚠️ KERNEL CONNECTION LOST — RECONNECTING…', 'danger');
-        reconnectToastShown = true;
-      }
-      // FIX #11: Clear queue and reset UI states when connection drops
-      if (notebook && typeof notebook.clearExecutionQueue === 'function') {
-        notebook.clearExecutionQueue();
-      }
+      if (!reconnectToastShown) { showToast('⚠️ KERNEL CONNECTION LOST — RECONNECTING…', 'danger'); reconnectToastShown = true; }
+      if (notebook && typeof notebook.clearExecutionQueue === 'function') notebook.clearExecutionQueue();
     },
   });
 
@@ -129,11 +122,8 @@ import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
 
   // ===== Notebook Controller =====
   const onCellChange = () => {
-    if (envManager && typeof envManager.scheduleOutlineUpdate === 'function') {
-      envManager.scheduleOutlineUpdate();
-    }
+    if (envManager && typeof envManager.scheduleOutlineUpdate === 'function') envManager.scheduleOutlineUpdate();
   };
-
   notebook = createNotebookController({
     container,
     templates: { cellTemplate, insertBarTemplate },
@@ -146,13 +136,8 @@ import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
 
   // ===== Terminal =====
   setupTerminal(
-    terminalToggleBtn,
-    terminalCloseBtn,
-    terminalPanel,
-    terminalScreen,
-    terminalOutput,
-    terminalInput,
-    terminalPromptLabel,
+    terminalToggleBtn, terminalCloseBtn, terminalPanel, terminalScreen,
+    terminalOutput, terminalInput, terminalPromptLabel,
     () => setTimeout(() => notebook.refreshAllEditors(), 50)
   );
 
@@ -161,41 +146,18 @@ import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
 
   // ===== Environment Manager =====
   const envManager = setupEnvManager({
-    panel: envPanel,
-    titleEl: envPanelTitle,
-    closeBtn: envCloseBtn,
-    views: {
-      current: envViewCurrent,
-      create: envViewCreate,
-      pip: envViewPip,
-      outline: envViewOutline,
-    },
-    modeRadios: envModeRadios,
-    namedSelect: envNamedSelect,
-    createInput: envCreateInput,
-    createBtn: envCreateBtn,
-    applyBtn: envApplyBtn,
-    statusLine: envStatusLine,
-    jupyVersionEl: envJupyVersion,
-    pythonVersionEl: envPythonVersion,
-    pathEl: envPath,
-    platformEl: envPlatform,
-    packageCountEl: envPackageCount,
-    statusLabelEl: envStatusLabel,
-    listEl: pipManagerList,
-    searchInput: pipSearchInput,
-    installInput: pipInstallInput,
-    installBtn: pipInstallBtn,
-    createStatusLine: envCreateStatusLine,
-    existingEnvsEl: envExistingList,
-    pipStatusLine,
-    outlineListEl,
-    notebook,
-    showToast,
+    panel: envPanel, titleEl: envPanelTitle, closeBtn: envCloseBtn,
+    views: { current: envViewCurrent, create: envViewCreate, pip: envViewPip, outline: envViewOutline },
+    modeRadios: envModeRadios, namedSelect: envNamedSelect,
+    createInput: envCreateInput, createBtn: envCreateBtn, applyBtn: envApplyBtn, statusLine: envStatusLine,
+    jupyVersionEl: envJupyVersion, pythonVersionEl: envPythonVersion, pathEl: envPath,
+    platformEl: envPlatform, packageCountEl: envPackageCount, statusLabelEl: envStatusLabel,
+    listEl: pipManagerList, searchInput: pipSearchInput, installInput: pipInstallInput, installBtn: pipInstallBtn,
+    createStatusLine: envCreateStatusLine, existingEnvsEl: envExistingList, pipStatusLine,
+    outlineListEl, notebook, showToast,
     onResize: () => setTimeout(() => notebook.refreshAllEditors(), 50),
     onEnvSwitched: () => showToast('🔄 KERNEL RESTARTED ON NEW ENVIRONMENT', 'danger'),
   });
-
   envManager.refreshStatus();
 
   // ===== Dropdown Menus =====
@@ -204,16 +166,43 @@ import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
   initExportDropdown(notebook, showToast);
   initEditDropdown(notebook, showToast);
 
-  // ===== Command Palette =====
+  // ===== Command Palette & Zen =====
   initCommandPalette(notebook);
-
-  // ===== Zen Mode =====
   initZenMode();
 
-  // ===== File Browser =====
-  initFileBrowser(document.querySelector('.app-workspace'));
+  // ============================================================
+  // ===== ACTIVITY RAIL (Colab-style left icon strip) =====
+  // Must be created BEFORE any module that mounts onto it.
+  // ============================================================
+  const activityBar = initActivityBar();
 
-  // ===== Git Integration =====
+  // ----- Utility panels (exclusive, mounted next to the rail) -----
+  initFileBrowser(activityBar);
+  initVariableExplorer(activityBar);
+  initDebugger(notebook, activityBar);
+  initSessionNotes(notebook, showToast, activityBar);
+  initCheckpoints(notebook, filenameInput, showToast, activityBar);
+
+  activityBar.addSeparator();
+
+  // ----- One-shot action icons -----
+  activityBar.registerAction({
+    id: 'find', icon: '🔍', title: 'Find / Replace (Ctrl+F)',
+    onTrigger: () => {
+      const bar = document.getElementById('find-bar');
+      if (!bar) return;
+      const show = bar.style.display !== 'flex';
+      bar.style.display = show ? 'flex' : 'none';
+      if (show) setTimeout(() => document.getElementById('find-input')?.focus(), 50);
+    },
+  });
+  activityBar.registerAction({
+    id: 'outline', icon: '📋', title: 'Outline',
+    onTrigger: () => envManager.openView('outline'),
+  });
+  initHyperparams(notebook, activityBar);
+
+  // ===== Git Integration (stays in the status bar) =====
   const statusBar = document.querySelector('.system-bar');
   if (statusBar) {
     const gitContainer = document.createElement('span');
@@ -226,42 +215,25 @@ import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
   // ===== Cell Folding =====
   initCellFolding(notebook);
 
-  // ===== Variable Explorer =====
-  initVariableExplorer(document.querySelector('.app-workspace'));
-
-  // ===== Debugger =====
-  initDebugger(notebook);
-
-  // ===== Hyperparameter Tuning =====
-  initHyperparams(notebook);
-
   // ===== tqdm Integration =====
   initTqdmIntegration(notebook);
 
   // ===== Presentation Button =====
-  document.getElementById('btn-presentation')?.addEventListener('click', () => {
-    notebook.togglePresentation();
-  });
+  document.getElementById('btn-presentation')?.addEventListener('click', () => notebook.togglePresentation());
 
   // ===== Restart / Interrupt methods =====
   notebook.restartKernel = async function() {
     try {
       const res = await fetch('/api/restart', { method: 'POST' });
       if (!res.ok) throw new Error(`Server responded with ${res.status}`);
-      
-      // FIX #11: Clear any pending executions before wiping outputs
-      if (typeof this.clearExecutionQueue === 'function') {
-        this.clearExecutionQueue();
-      }
-
+      if (typeof this.clearExecutionQueue === 'function') this.clearExecutionQueue();
       this.getCells().forEach((c) => {
-         c.execCount = null;
-         c.outputs = [];
-         c.dom.execCountEl.textContent = '[\u00A0]';
-         const output = c.dom.outputEl;
-         output.hidden = true;
-         output.innerHTML = '';
-       });
+        c.execCount = null;
+        c.dom.execCountEl.textContent = '[\u00A0]';
+        const output = c.dom.outputEl;
+        output.hidden = true;
+        output.innerHTML = '';
+      });
       showToast('🔄 KERNEL RESTARTED', 'danger');
       return true;
     } catch (err) {
@@ -269,42 +241,26 @@ import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
       return false;
     }
   };
-
   notebook.restartAndRunAll = async function() {
     const ok = await this.restartKernel();
     if (ok) this.runAll();
   };
-
   notebook.restartAndRunToSelected = async function() {
     const ok = await this.restartKernel();
     if (ok) {
       const targetIdx = this.getSelectedId()
-        ? this.getCells().findIndex(c => c.id === this.getSelectedId())
-        : -1;
-      if (targetIdx === -1) {
-        this.runAll();
-      } else {
-        this.getCells().slice(0, targetIdx + 1).forEach(c => this.runCell(c.id, { advance: false }));
-      }
+        ? this.getCells().findIndex(c => c.id === this.getSelectedId()) : -1;
+      if (targetIdx === -1) this.runAll();
+      else this.getCells().slice(0, targetIdx + 1).forEach(c => this.runCell(c.id, { advance: false }));
     }
   };
-
   notebook.interruptKernel = function() {
-    if (runSocket.isOpen) {
-      runSocket.send({ action: 'interrupt' });
-      showToast('⏹ EXECUTION INTERRUPTED', 'danger');
-    }
+    if (runSocket.isOpen) { runSocket.send({ action: 'interrupt' }); showToast('⏹ EXECUTION INTERRUPTED', 'danger'); }
   };
 
   // ===== Open / Save =====
-  saveBtn?.addEventListener('click', () => {
-    downloadNotebook(notebook.getCells(), filenameInput?.value);
-  });
-
-  openBtn?.addEventListener('click', () => {
-    fileInput?.click();
-  });
-
+  saveBtn?.addEventListener('click', () => downloadNotebook(notebook.getCells(), filenameInput?.value));
+  openBtn?.addEventListener('click', () => fileInput?.click());
   fileInput?.addEventListener('change', async () => {
     const file = fileInput.files && fileInput.files[0];
     if (!file) return;
@@ -323,9 +279,7 @@ import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
   });
 
   // ===== Add Cell Button =====
-  addCellBtn?.addEventListener('click', () => {
-    notebook.insertCellAt(notebook.getCells().length, '', { focus: true });
-  });
+  addCellBtn?.addEventListener('click', () => notebook.insertCellAt(notebook.getCells().length, '', { focus: true }));
 
   // ===== Default Notebook =====
   notebook.insertCellAt(0, [
@@ -336,18 +290,10 @@ import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
     'print("Welcome to Jupy!")',
   ].join('\n'));
 
-  // ===== Menus =====
-  initRuntimeMenu({
-    menu: runtimeMenu,
-    trigger: runtimeMenuTrigger,
-    dropdown: runtimeMenuDropdown,
-    notebook,
-  });
+  // ===== Autosave (OPTIONAL — uncomment after creating persistence/autosave.js) =====
+  // initAutosave(notebook, filenameInput, document.getElementById('last-exec-time'));
 
-  initEnvTopbarMenu({
-    menu: envTopbarMenu,
-    trigger: envTopbarMenuTrigger,
-    dropdown: envTopbarMenuDropdown,
-    envManager,
-  });
+  // ===== Menus =====
+  initRuntimeMenu({ menu: runtimeMenu, trigger: runtimeMenuTrigger, dropdown: runtimeMenuDropdown, notebook });
+  initEnvTopbarMenu({ menu: envTopbarMenu, trigger: envTopbarMenuTrigger, dropdown: envTopbarMenuDropdown, envManager });
 })();

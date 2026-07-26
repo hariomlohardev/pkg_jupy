@@ -2,6 +2,7 @@
  * widgets/widgetManager.js
  * Full ipywidgets implementation for Jupy.
  */
+import { hasRenderer, getRenderer, renderFallback } from './widgetRegistry.js';
 export class WidgetManager {
   constructor(runSocket) {
     this.widgets = {};               // widget_id -> { type, el, kwargs, children, callbacks }
@@ -79,11 +80,45 @@ export class WidgetManager {
       case 'Output':       el = this._createOutput(id, kwargs); break;
       default:
         el = document.createElement('div');
-        el.textContent = `Unknown widget: ${type}`;
+        el.className = 'widget-custom';
+        if (hasRenderer(type)) {
+          getRenderer(type)(kwargs, el);
+        } else {
+          renderFallback(type, kwargs, el);
+        }
     }
     this.widgets[id] = { type, el, kwargs, children, callbacks: [] };
     this._updateLayoutsWithChildren(id);
+    this._applyLayout(el, kwargs.layout);
+    this._applyStyle(el, kwargs.style);
     return el;
+  }
+
+  // D1: map ipywidgets layout attributes to CSS
+  _applyLayout(el, layout) {
+    if (!el || !layout) return;
+    const map = {
+      width: 'width', height: 'height', min_width: 'minWidth', max_width: 'maxWidth',
+      min_height: 'minHeight', max_height: 'maxHeight', margin: 'margin', padding: 'padding',
+      display: 'display', flex: 'flex', flex_flow: 'flexFlow',
+      justify_content: 'justifyContent', align_items: 'alignItems', align_self: 'alignSelf',
+      grid_template_columns: 'gridTemplateColumns', grid_template_rows: 'gridTemplateRows',
+      grid_gap: 'gap', border: 'border', overflow: 'overflow', visibility: 'visibility',
+    };
+    for (const [key, css] of Object.entries(map)) {
+      if (layout[key] != null) el.style[css] = String(layout[key]);
+    }
+  }
+
+  // D1: map a few common ipywidgets style attributes
+  _applyStyle(el, style) {
+    if (!el || !style) return;
+    if (style.button_color) el.style.background = style.button_color;
+    if (style.description_width) {
+      const label = el.querySelector('.widget-label');
+      if (label) label.style.minWidth = style.description_width;
+    }
+    if (style.font_weight) el.style.fontWeight = style.font_weight;
   }
 
   _updateLayoutsWithChildren(childId) {

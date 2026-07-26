@@ -17,65 +17,116 @@ _original_stdout = sys.stdout
 # ----------------------------------------------------------------------
 _breakpoints = []
 _debugger_enabled = False
-_debugger_event = threading.Event()
 _debugger_mode = "continue"
 _debugger_step_frame = None
+_last_exception = None   # E4: saved for %debug post-mortem
+
+def _normalize_step_mode(arg):
+    if arg in ("over", "step_over"): return "step_over"
+    if arg in ("into", "step_into"): return "step_into"
+    if arg in ("out", "step_out"):   return "step_out"
+    return arg
 
 def _debugger_send_paused(frame):
+    # E3: build the call stack by walking f_back
+    stack = []
+    f = frame
+    depth = 0
+    while f is not None and depth < 25:
+        try:
+            local_preview = {k: repr(v)[:80] for k, v in list(f.f_locals.items())[:12]}
+        except Exception:
+            local_preview = {}
+        stack.append({
+            "file": f.f_code.co_filename,
+            "line": f.f_lineno,
+            "function": f.f_code.co_name,
+            "locals": local_preview,
+        })
+        f = f.f_back
+        depth += 1
     payload = {
         "type": "paused",
         "file": frame.f_code.co_filename,
         "line": frame.f_lineno,
-        "frame": str(frame.f_locals)
+        "function": frame.f_code.co_name,
+        "frame": str(frame.f_locals),
+        "stack": stack,
     }
     _original_stdout.write("---JUPY_DEBUGGER_PAUSED:" + json.dumps(payload) + "---\n")
     _original_stdout.flush()
 
+def _debugger_pause_and_wait(frame):
+    # While paused, the main stdin loop is blocked inside exec(), so the trace
+    # function owns stdin and reads debugger commands directly.
+    global _debugger_mode, _debugger_step_frame
+    _debugger_send_paused(frame)
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            _debugger_mode = "stop"
+            return
+        try:
+            data = json.loads(line)
+        except Exception:
+            continue
+        if data.get("action") != "debugger":
+            continue
+        cmd = data.get("cmd")
+        if cmd == "step":
+            _debugger_mode = _normalize_step_mode(data.get("arg"))
+            return
+        elif cmd == "continue":
+            _debugger_mode = "continue"
+            return
+        elif cmd == "stop":
+            _debugger_mode = "stop"
+            return
 
 def _debugger_trace(frame, event, arg):
     global _debugger_step_frame, _debugger_mode
-
     if not _debugger_enabled:
         return None
+
+    if event == "return":
+        # E2 step_out: pause when the target frame returns (back in its caller)
+        if _debugger_mode == "step_out" and frame is _debugger_step_frame:
+            caller = frame.f_back
+            _debugger_step_frame = caller if caller else frame
+            _debugger_pause_and_wait(caller if caller else frame)
+            if _debugger_mode == "stop":
+                _debugger_mode = "continue"
+                return None
+            _debugger_step_frame = frame.f_back if frame.f_back else frame
+        return _debugger_trace
 
     if event != "line":
         return _debugger_trace
 
-    if _debugger_mode == "step_out":
-        if frame is not _debugger_step_frame:
-            return _debugger_trace
-    elif _debugger_mode == "step_over":
-        if frame is not _debugger_step_frame:
-            return _debugger_trace
-
-    hit = False
     filename = frame.f_code.co_filename
     lineno = frame.f_lineno
 
-    for bp in _breakpoints:
-        if bp.get("file") == filename and bp.get("line") == lineno:
-            hit = True
-            break
+    should_pause = False
+    if _debugger_mode == "step_into":
+        should_pause = True
+    elif _debugger_mode in ("step_over", "step_out") and frame is _debugger_step_frame:
+        should_pause = True
+    else:
+        for bp in _breakpoints:
+            if bp.get("file") == filename and bp.get("line") == lineno:
+                should_pause = True
+                break
 
-    if hit or _debugger_mode in ("step_into", "step_over", "step_out"):
-        _debugger_send_paused(frame)
-        _debugger_event.clear()
-        _debugger_event.wait()
-
+    if should_pause:
+        _debugger_pause_and_wait(frame)
         if _debugger_mode == "stop":
+            _debugger_mode = "continue"
             return None
-
-        if _debugger_mode == "step_into":
-            _debugger_step_frame = frame
-        elif _debugger_mode == "step_over":
+        if _debugger_mode in ("step_into", "step_over"):
             _debugger_step_frame = frame
         elif _debugger_mode == "step_out":
-            _debugger_step_frame = frame.f_back
-        elif _debugger_mode == "continue":
-            _debugger_step_frame = None
-
+            _debugger_step_frame = frame
     return _debugger_trace
-
 # ----------------------------------------------------------------------
 # Helpers (completions, hover)
 # ----------------------------------------------------------------------
@@ -242,7 +293,7 @@ def _run_magic(line, cell, namespace):
     elif magic_name == 'load': return _magic_load(args, cell, namespace)
     elif magic_name == 'store': return _magic_store(args, cell, namespace)
     elif magic_name == 'history': return _magic_history(args, cell, namespace)
-    elif magic_name == 'debug': return "Debugger not implemented. Use %pdb (which is also limited in headless mode)."
+    elif magic_name == 'debug': return _magic_debug(args, cell, namespace)
     elif magic_name == 'gc': return _magic_gc(args, cell, namespace)
     elif magic_name == 'cache': return _magic_cache(args, cell, namespace)
     elif magic_name == 'pip': return _magic_pip(args, cell, namespace)
@@ -296,6 +347,29 @@ def _magic_env(args, cell, namespace):
     else:
         key = args[0]
         return os.environ.get(key, '')
+def _magic_debug(args, cell, namespace):
+    if _last_exception is None:
+        return "No exception to debug. Run a failing cell first, then %debug."
+    payload = {
+        "type": "paused",
+        "postmortem": True,
+        "file": _last_exception["file"],
+        "line": _last_exception["line"],
+        "function": "<exception>",
+        "frame": str(_last_exception["locals"]),
+        "stack": [{
+            "file": _last_exception["file"],
+            "line": _last_exception["line"],
+            "function": "<exception>",
+            "locals": _last_exception["locals"],
+        }],
+        "traceback": _last_exception["traceback"],
+    }
+    _original_stdout.write("---JUPY_DEBUGGER_PAUSED:" + json.dumps(payload) + "---\n")
+    _original_stdout.flush()
+    return (f"Post-mortem: {_last_exception['type']}: {_last_exception['value']} "
+            f"at line {_last_exception['line']}. Open the Debugger panel to inspect. "
+            f"(Stepping is unavailable after the fact — re-run the cell with a breakpoint to step.)")
 
 def _magic_alias(args, cell, namespace):
     global _alias_dict
@@ -949,11 +1023,18 @@ def _custom_input(prompt=""):
         pass
 
     return line
-builtins.input = _custom_input
 
 # ----------------------------------------------------------------------
 # Main execution loop
 # ----------------------------------------------------------------------
+builtins.input = _custom_input
+
+_cell_start_time = [0.0]
+def _finish_cell():
+    elapsed = time.perf_counter() - _cell_start_time[0]
+    sys.stdout.write(f"---JUPY_CELL_ELAPSED:{elapsed:.6f}---\n")
+    sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
+    sys.stdout.flush()
 while True:
     line = sys.stdin.readline()
     if not line: break
@@ -1011,30 +1092,18 @@ while True:
             sys.stdout.write("---JUPY_BREAKPOINTS_SET---\n")
             sys.stdout.flush()
         elif action == "debugger":
+            # Only reached when NOT executing (while executing, the trace
+            # function reads debugger commands from stdin directly).
             cmd = data.get("cmd")
-            arg = data.get("arg")
-
             if cmd == "step":
-                if arg in ("over", "step_over"):
-                    _debugger_mode = "step_over"
-                elif arg in ("into", "step_into"):
-                    _debugger_mode = "step_into"
-                elif arg in ("out", "step_out"):
-                    _debugger_mode = "step_out"
-                else:
-                    _debugger_mode = arg
-                _debugger_event.set()
+                _debugger_mode = _normalize_step_mode(data.get("arg"))
             elif cmd == "continue":
-                _debugger_event.set()
                 _debugger_mode = "continue"
             elif cmd == "stop":
-                _debugger_event.set()
                 _debugger_mode = "stop"
-
-            sys.stdout.write("---JUPY_DEBUGGER_ACK---\n")
-            sys.stdout.flush()
         elif action == "execute":
             code = data.get("code", "")
+            _cell_start_time[0] = time.perf_counter()
             lines = code.splitlines()
             if lines and lines[0].strip().startswith('%%'):
                 magic_line = lines[0]
@@ -1047,8 +1116,7 @@ while True:
                 if result:
                     sys.stdout.write("---JUPY_STDOUT---\n")
                     sys.stdout.write(result + "\n")
-                sys.stdout.write("---JUPY_CELL_COMPLETE---\n")
-                sys.stdout.flush()
+                _finish_cell()
                 continue
             non_empty_lines = [l for l in lines if l.strip()]
             if non_empty_lines and non_empty_lines[0].strip().startswith('%'):
@@ -1149,6 +1217,18 @@ while True:
                 else: err_msg = "".join(traceback.format_exception_only(type(e), e))
                 sys.stdout.write(f"---JUPY_STDERR---\n{err_msg}\n")
             except Exception as e:
+                try:
+                    tb = e.__traceback__
+                    _last_exception = {
+                        "type": type(e).__name__,
+                        "value": str(e),
+                        "file": tb.tb_frame.f_code.co_filename if tb else "<cell>",
+                        "line": tb.tb_lineno if tb else 1,
+                        "locals": {k: repr(v)[:80] for k, v in list(tb.tb_frame.f_locals.items())[:12]} if tb else {},
+                        "traceback": "".join(traceback.format_exception(type(e), e, tb)),
+                    }
+                except Exception:
+                    _last_exception = None
                 if _pdb_mode:
                     sys.stdout.write("---JUPY_STDERR---\n")
                     sys.stdout.write("pdb mode is ON, but post‑mortem debugging is not supported in headless kernel.\n")
