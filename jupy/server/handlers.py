@@ -3,6 +3,8 @@ import os
 import platform
 import threading
 import time
+import sys
+import subprocess
 from http.server import SimpleHTTPRequestHandler
 from jupy import __version__ as JUPY_VERSION
 from jupy.core import envmanager
@@ -13,6 +15,8 @@ from jupy.core.venv import get_python_version, install_package, list_packages, u
 from jupy.server.protocol import make_ws_accept, make_ws_frame, parse_ws_frame
 
 STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
+VENV_DIR = os.path.abspath(".jupy_env")
+VENV_BIN = os.path.join(VENV_DIR, "Scripts") if sys.platform == "win32" else os.path.join(VENV_DIR, "bin")
 
 
 class JupyHTTPHandler(SimpleHTTPRequestHandler):
@@ -32,16 +36,15 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 comps = kernel.get_completions(code, line, col)
                 self._send_json({"completions": comps})
 
-            elif self.path == "/api/hover":          # <-- added this block
+            elif self.path == "/api/hover":
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 code = data.get("code", "")
                 line = data.get("line", 1)
                 col = data.get("column", 0)
                 info = kernel.get_hover(code, line, col)
                 self._send_json({"hover": info})
-                
-            elif self.path == "/api/restart":
 
+            elif self.path == "/api/restart":
                 kernel.restart()
                 self._send_json({"status": "restarted", "exec_count": kernel.exec_count})
 
@@ -140,7 +143,6 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
         }
 
     def handle_metrics_ws(self):
-        """Streams 5-second moving average hardware usage every 5 seconds over WebSocket."""
         ws_lock = threading.Lock()
 
         def stream_loop():
@@ -171,11 +173,13 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                     frame = make_ws_frame(json.dumps(data_dict))
                     self.wfile.write(frame)
                     self.wfile.flush()
-                except Exception: pass
+                except Exception:
+                    pass
 
         while True:
             msg, opcode = parse_ws_frame(self.rfile)
-            if opcode == 0x8 or msg is None: break
+            if opcode == 0x8 or msg is None:
+                break
             try:
                 req = json.loads(msg)
                 action = req.get("action")
@@ -187,36 +191,59 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 elif action == "stdin_reply":
                     val = req.get("value", "")
                     kernel.handle_stdin_reply(val)
-            except Exception: pass
+            except Exception:
+                pass
 
     def handle_terminal_ws(self):
-        ws_lock = threading.Lock()
+        """Native Shell Handler with chunked stdout reading."""
+        env = os.environ.copy()
+        env["VIRTUAL_ENV"] = VENV_DIR
+        env["PATH"] = VENV_BIN + os.path.pathsep + env.get("PATH", "")
 
-        def ws_send(data_dict):
-            with ws_lock:
+        shell = ["cmd.exe", "/K"] if sys.platform == "win32" else [env.get("SHELL", "/bin/bash"), "-i"]
+
+        proc = subprocess.Popen(
+            shell,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
+            cwd=os.getcwd()
+        )
+
+        def stream_stdout():
+            while proc.poll() is None:
                 try:
-                    frame = make_ws_frame(json.dumps(data_dict))
-                    self.wfile.write(frame)
-                    self.wfile.flush()
-                except Exception: pass
+                    # Read in 4096-byte chunks for performance
+                    chunk = proc.stdout.read(4096)
+                    if chunk:
+                        text = chunk.decode("utf-8", errors="replace")
+                        frame = make_ws_frame(json.dumps({"type": "output", "data": text}))
+                        self.wfile.write(frame)
+                        self.wfile.flush()
+                    else:
+                        break
+                except Exception:
+                    break
 
-        term = TerminalSession(ws_send)
-        ws_send({"type": "prompt", "data": term.get_prompt()})
+        threading.Thread(target=stream_stdout, daemon=True).start()
 
         while True:
             msg, opcode = parse_ws_frame(self.rfile)
             if opcode == 0x8 or msg is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
                 break
             try:
                 data = json.loads(msg)
-                if data.get("type") == "command":
-                    cmd = data.get("cmd", "")
-                    threading.Thread(
-                        target=term.execute_cmd,
-                        args=(cmd,),
-                        daemon=True
-                    ).start()
-            except Exception: pass
+                if data.get("type") == "input":
+                    inp = data.get("data", "")
+                    proc.stdin.write(inp.encode("utf-8"))
+                    proc.stdin.flush()
+            except Exception:
+                pass
 
     def _send_json(self, data):
         body = json.dumps(data).encode("utf-8")

@@ -1,14 +1,13 @@
 /**
  * config/constants.js
  * Shared timing, sizing, and networking constants for the Jupy front-end.
- * Centralised here so magic numbers aren't scattered across feature modules.
  */
 
 // Double-tap window for the "D D" (delete), "I I" (interrupt), "0 0" (restart) shortcuts.
 export const DOUBLE_TAP_WINDOW_MS = 600;
 
 // Debounce before firing an autocomplete request after the user stops typing.
-export const AUTOCOMPLETE_DEBOUNCE_MS = 50;
+export const AUTOCOMPLETE_DEBOUNCE_MS = 200;  // increased from 50 to reduce load
 
 // Toast notification visible duration + fade-out duration.
 export const TOAST_VISIBLE_MS = 2000;

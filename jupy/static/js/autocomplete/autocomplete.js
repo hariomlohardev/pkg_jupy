@@ -1,7 +1,7 @@
 /**
  * autocomplete/autocomplete.js
- * Wires a CodeMirror instance up to Jupy's `/api/complete` endpoint.
- * Adds hover tooltips using `/api/hover`.
+ * Wires a CodeMirror instance to Jupy's `/api/complete` and `/api/hover`.
+ * Shows VS‑Code‑style tooltips with full details.
  */
 import { AUTOCOMPLETE_DEBOUNCE_MS } from '../config/constants.js';
 
@@ -12,7 +12,7 @@ const IGNORED_KEYS = new Set([
 
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
-// Global tooltip element (created once)
+// Global tooltip element
 let hoverTooltip = null;
 let hideTooltipTimer = null;
 let isHoveringTooltip = false;
@@ -28,16 +28,16 @@ function createTooltip() {
     hoverTooltip.style.border = 'var(--border-thick)';
     hoverTooltip.style.borderRadius = 'var(--rounded-sm)';
     hoverTooltip.style.boxShadow = 'var(--shadow-brutal-lg)';
-    hoverTooltip.style.padding = '6px 10px';
+    hoverTooltip.style.padding = '8px 12px';
     hoverTooltip.style.fontFamily = 'var(--font-mono)';
     hoverTooltip.style.fontSize = '0.78rem';
-    hoverTooltip.style.maxWidth = '400px';
-    hoverTooltip.style.maxHeight = '200px';
+    hoverTooltip.style.maxWidth = '480px';
+    hoverTooltip.style.maxHeight = '280px';
     hoverTooltip.style.overflow = 'auto';
-    hoverTooltip.style.pointerEvents = 'auto'; // allow scrolling and mouse events
+    hoverTooltip.style.pointerEvents = 'auto';
+    hoverTooltip.style.lineHeight = '1.4';
     document.body.appendChild(hoverTooltip);
 
-    // When mouse enters the tooltip, cancel any pending hide
     hoverTooltip.addEventListener('mouseenter', () => {
       isHoveringTooltip = true;
       if (hideTooltipTimer) {
@@ -45,10 +45,9 @@ function createTooltip() {
         hideTooltipTimer = null;
       }
     });
-    // When mouse leaves the tooltip, start a short hide delay
     hoverTooltip.addEventListener('mouseleave', () => {
       isHoveringTooltip = false;
-      scheduleHideTooltip();
+      scheduleHideTooltip(300);
     });
   }
   return hoverTooltip;
@@ -76,16 +75,31 @@ function hideTooltip() {
   }
 }
 
-export function registerAutocomplete(cm) {
+function clampTooltip(tooltip) {
+  const rect = tooltip.getBoundingClientRect();
+  const margin = 10;
+  let left = parseFloat(tooltip.style.left) || 0;
+  let top = parseFloat(tooltip.style.top) || 0;
+  const maxLeft = window.innerWidth - rect.width - margin;
+  const maxTop = window.innerHeight - rect.height - margin;
+  if (left > maxLeft) left = maxLeft;
+  if (left < margin) left = margin;
+  if (top > maxTop) top = maxTop;
+  if (top < margin) top = margin;
+  tooltip.style.left = left + 'px';
+  tooltip.style.top = top + 'px';
+}
+
+/**
+ * Register autocomplete and hover for a CodeMirror instance.
+ * @param {CodeMirror} cm
+ * @param {string} cellId - ID of the cell this editor belongs to
+ */
+export function registerAutocomplete(cm, cellId) {
   let debounceTimer = null;
   let activeAbortController = null;
   let hoverTimer = null;
-  let currentHoverPos = null;
 
-  // Store a reference to the notebook controller to get all cells' code.
-  // We'll set this via a global or a closure. For simplicity, we'll assume
-  // the notebook controller is available globally (we'll set it in app.js).
-  // Alternatively, we can pass it as an argument. We'll use a global for now.
   const notebook = window.__jupy_notebook;
 
   function triggerHint(editor) {
@@ -162,7 +176,7 @@ export function registerAutocomplete(cm) {
       });
   }
 
-  // Hover functionality
+  // Hover with VS‑Code‑style tooltip
   function showHover(editor, event) {
     const cursor = editor.coordsChar({ left: event.clientX, top: event.clientY });
     const token = editor.getTokenAt(cursor);
@@ -170,73 +184,138 @@ export function registerAutocomplete(cm) {
       hideTooltip();
       return;
     }
-    // Only hover on identifiers (including dots)
     if (!IDENTIFIER_RE.test(token.string) && token.string !== '.') {
       hideTooltip();
       return;
     }
 
-    // If we have a notebook, get the entire code from all cells
-    let allCode = '';
-    if (notebook) {
-      const cells = notebook.getCells();
-      allCode = cells.map(c => c.cm.getValue()).join('\n\n');
-    } else {
-      allCode = editor.getValue(); // fallback to current cell only
+    if (!notebook) {
+      hideTooltip();
+      return;
     }
+
+    // Find this cell's index
+    const cells = notebook.getCells();
+    let targetIndex = -1;
+    for (let i = 0; i < cells.length; i++) {
+      if (cells[i].id === cellId) {
+        targetIndex = i;
+        break;
+      }
+    }
+    if (targetIndex === -1) {
+      hideTooltip();
+      return;
+    }
+
+    // Build combined code and compute line offsets correctly
+    let allCode = '';
+    const lineOffsets = []; // number of lines before each cell
+    let currentLineCount = 0;
+    for (let i = 0; i < cells.length; i++) {
+      const cellCode = cells[i].cm.getValue();
+      const lines = cellCode.split('\n');
+      lineOffsets[i] = currentLineCount; // lines before this cell
+      allCode += cellCode;
+      currentLineCount += lines.length;
+      if (i < cells.length - 1) {
+        // Add two newlines – this creates one empty line between cells
+        allCode += '\n\n';
+        currentLineCount += 1; // the empty line
+      }
+    }
+
+    const absoluteLine = lineOffsets[targetIndex] + cursor.line + 1; // 1‑based
+
+    // Debug logs (remove after verification)
+    console.log(`[Hover] cellId: ${cellId}, targetIndex: ${targetIndex}`);
+    console.log(`[Hover] cursor.line: ${cursor.line}, cursor.ch: ${cursor.ch}`);
+    console.log(`[Hover] lineOffsets[targetIndex]: ${lineOffsets[targetIndex]}, absoluteLine: ${absoluteLine}`);
+    console.log(`[Hover] combinedCode length: ${allCode.length}, first 200 chars:`, allCode.substring(0, 200));
 
     const pos = editor.cursorCoords(cursor, 'page');
     const tooltip = createTooltip();
     tooltip.style.display = 'block';
     tooltip.style.left = (pos.left + 10) + 'px';
     tooltip.style.top = (pos.top - 10) + 'px';
-    // Clear any scheduled hide
+
     if (hideTooltipTimer) {
       clearTimeout(hideTooltipTimer);
       hideTooltipTimer = null;
     }
 
-    // Show loading
     tooltip.textContent = 'Loading…';
-
-    const lineNum = cursor.line + 1;
-    const colNum = cursor.ch;
 
     fetch('/api/hover', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: allCode, line: lineNum, column: colNum }),
+      body: JSON.stringify({
+        code: allCode,
+        line: absoluteLine,
+        column: cursor.ch,
+      }),
     })
       .then(res => res.json())
       .then(data => {
         const info = data.hover;
+        console.log('[Hover] Server response:', info);
         if (!info) {
+          // If Jedi couldn't find it, try a fallback: get the definition using goto
+          // but we'll just show a more helpful message.
           tooltip.innerHTML = '<div style="opacity:0.7;">No documentation available</div>';
+          clampTooltip(tooltip);
           return;
         }
-        let html = `<div style="font-weight:800;color:var(--color-primary);">${info.name}</div>`;
-        if (info.type) html += `<div style="opacity:0.7;font-size:0.7rem;">${info.type}</div>`;
-        if (info.signature) html += `<div style="font-weight:700;margin-top:4px;">${info.signature}</div>`;
-        if (info.description) html += `<div style="margin-top:4px;">${info.description}</div>`;
+
+        let html = '';
+
+        // Header: name + type badge
+        html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">`;
+        html += `<span style="font-weight:800; font-size:0.9rem; color:var(--color-primary);">${info.name}</span>`;
+        if (info.type) {
+          const typeLabel = info.type === 'function' ? 'func' : info.type;
+          html += `<span style="font-size:0.6rem; background:var(--color-secondary); padding:1px 6px; border-radius:3px; color:#111827; font-weight:700; text-transform:uppercase;">${typeLabel}</span>`;
+        }
+        html += `</div>`;
+
+        // Signature
+        if (info.signature) {
+          html += `<div style="font-family:var(--font-mono); font-size:0.75rem; background:var(--color-bg-well); padding:3px 8px; border-radius:3px; margin-bottom:4px; border-left:3px solid var(--color-primary); white-space:pre-wrap; word-break:break-all;">${info.signature}</div>`;
+        }
+
+        // Description
+        if (info.description) {
+          html += `<div style="font-size:0.78rem; margin-bottom:2px;">${info.description}</div>`;
+        }
+
+        // Full docstring (after first line)
         if (info.docstring && info.docstring !== info.description) {
           const lines = info.docstring.split('\n');
           if (lines.length > 1) {
-            html += `<div style="margin-top:4px;opacity:0.8;border-top:1px solid var(--color-bg-well);padding-top:4px;">${lines.slice(1).join('<br>')}</div>`;
+            const rest = lines.slice(1).join('\n');
+            html += `<div style="font-size:0.72rem; opacity:0.8; border-top:1px solid var(--color-border); padding-top:4px; margin-top:2px; max-height:80px; overflow-y:auto; white-space:pre-wrap;">${rest}</div>`;
           }
         }
+
+        // Module
+        if (info.module) {
+          html += `<div style="font-size:0.6rem; opacity:0.5; margin-top:4px; border-top:1px solid var(--color-bg-well); padding-top:2px;">from ${info.module}</div>`;
+        }
+
         tooltip.innerHTML = html;
+        clampTooltip(tooltip);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('[Hover] Fetch error:', err);
         tooltip.innerHTML = '<div style="opacity:0.7;">Error fetching info</div>';
+        clampTooltip(tooltip);
       });
   }
 
-  // Attach hover events
   const wrapper = cm.getWrapperElement();
   wrapper.addEventListener('mouseover', (event) => {
     const target = event.target.closest('.CodeMirror');
     if (!target) return;
-    // Debounce hover
     if (hoverTimer) clearTimeout(hoverTimer);
     hoverTimer = setTimeout(() => {
       showHover(cm, event);
@@ -247,11 +326,9 @@ export function registerAutocomplete(cm) {
   wrapper.addEventListener('mouseout', (event) => {
     const related = event.relatedTarget;
     if (related && wrapper.contains(related)) return;
-    // Start a hide delay to allow moving to the tooltip
     scheduleHideTooltip(300);
   });
 
-  // Also hide when scrolling or moving cursor
   cm.on('scroll', () => {
     if (!isHoveringTooltip) hideTooltip();
   });

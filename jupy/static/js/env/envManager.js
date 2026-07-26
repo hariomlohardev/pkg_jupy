@@ -1,27 +1,17 @@
 /**
  * env/envManager.js
- * Left slide-out panel with three mutually-exclusive views, each opened from
- * the "ENVIRONMENT" topbar dropdown (see env/envTopbarMenu.js):
- *
- *   - "current" : switch between the global default env, a named global env,
- *                 or a project-local `.jupy_env`, plus details about whatever
- *                 is currently active.
- *   - "create"  : create a new named global env.
- *   - "pip"     : manage packages (search/install/uninstall) in the active env.
- *
- * Only one view is ever shown at a time. Calling openView(view) while a
- * *different* view is already open swaps to the new one (the old one is
- * cancelled, not stacked). Calling openView(view) again for the view that's
- * already open closes the whole panel — a simple toggle.
+ * Left slide-out panel with four views: current, create, pip, outline.
  */
 export function setupEnvManager({
   panel, closeBtn, titleEl,
-  views, // { current: HTMLElement, create: HTMLElement, pip: HTMLElement }
+  views, // { current, create, pip, outline }
   modeRadios, namedSelect, createInput, createBtn, applyBtn, statusLine,
   jupyVersionEl, pythonVersionEl, pathEl, platformEl, packageCountEl,
   statusLabelEl,
   listEl, searchInput, installInput, installBtn,
   createStatusLine, existingEnvsEl, pipStatusLine,
+  outlineListEl,  // container for outline items
+  notebook,       // notebook controller (to get cells and listen)
   showToast, onResize, onEnvSwitched,
 }) {
   let current = null;
@@ -30,11 +20,14 @@ export function setupEnvManager({
   let loaded = false;
   let busy = false;
   let activeView = null;
+  let outlineUpdateTimer = null;
+  let cellChangeListeners = [];
 
   const VIEW_LABELS = {
     current: '📦 CURRENT ENVIRONMENT',
     create: '➕ CREATE ENVIRONMENT',
     pip: '📦 PIP MANAGER',
+    outline: '📋 OUTLINE',
   };
 
   function escapeHtml(s) {
@@ -107,6 +100,96 @@ export function setupEnvManager({
       listEl.appendChild(row);
     });
   }
+
+  // --- Outline ---
+
+  function renderOutline() {
+    if (!notebook) return;
+    const cells = notebook.getCells();
+    const items = [];
+    // Improved regex: allows decorators (with optional arguments) and 'async'
+    const definitionRegex = /^\s*(?:@\w+(?:\s*\([^)]*\))?\s+)*(?:async\s+)?(?:def|class)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/;
+    cells.forEach((cell, idx) => {
+      const code = cell.cm.getValue();
+      const lines = code.split('\n');
+      lines.forEach((line, lineIdx) => {
+        const match = line.match(definitionRegex);
+        if (match) {
+          const name = match[1];
+          const kind = line.includes('class') ? 'class' : 'func';
+          items.push({ name, kind, cellIdx: idx, line: lineIdx + 1, source: line.trim() });
+        }
+      });
+    });
+
+    if (!outlineListEl) return;
+    if (items.length === 0) {
+      outlineListEl.innerHTML = '<div class="pip-manager-empty">No functions or classes found.</div>';
+      return;
+    }
+
+    outlineListEl.innerHTML = '';
+    items.forEach((item) => {
+      const div = document.createElement('div');
+      div.className = 'outline-item';
+      div.style.cursor = 'pointer';
+      div.style.padding = '4px 6px';
+      div.style.borderBottom = '1px solid var(--color-bg-well)';
+      div.style.display = 'flex';
+      div.style.alignItems = 'center';
+      div.style.gap = '8px';
+      div.innerHTML = `
+        <span style="font-weight:800;color:var(--color-primary);">${item.kind === 'class' ? '📦' : '🔧'}</span>
+        <span style="font-family:var(--font-mono);font-size:0.8rem;">${escapeHtml(item.name)}</span>
+        <span style="font-size:0.65rem;opacity:0.6;margin-left:auto;">cell ${item.cellIdx+1}, line ${item.line}</span>
+      `;
+      div.addEventListener('click', () => {
+        notebook.selectCell(notebook.getCells()[item.cellIdx].id);
+        notebook.enterEditMode(notebook.getCells()[item.cellIdx].id);
+        const cm = notebook.getCells()[item.cellIdx].cm;
+        cm.focus();
+        cm.setCursor({ line: item.line - 1, ch: 0 });
+        close();
+      });
+      outlineListEl.appendChild(div);
+    });
+  }
+
+  function scheduleOutlineUpdate() {
+    if (activeView === 'outline') {
+      if (outlineUpdateTimer) clearTimeout(outlineUpdateTimer);
+      outlineUpdateTimer = setTimeout(() => {
+        renderOutline();
+        outlineUpdateTimer = null;
+      }, 300);
+    }
+  }
+
+  function startOutlineListening() {
+    if (!notebook) return;
+    // Remove old listeners
+    cellChangeListeners.forEach(unbind => unbind());
+    cellChangeListeners = [];
+    const cells = notebook.getCells();
+    cells.forEach(cell => {
+      const handler = () => scheduleOutlineUpdate();
+      cell.cm.on('change', handler);
+      cellChangeListeners.push(() => cell.cm.off('change', handler));
+    });
+    // Also listen for when cells are added/deleted/moved (patch methods)
+    // We'll rely on the notebook's callbacks for that.
+  }
+
+  function stopOutlineListening() {
+    cellChangeListeners.forEach(unbind => unbind());
+    cellChangeListeners = [];
+  }
+
+  // We'll also need to listen to cell insertion/deletion via notebook's public methods.
+  // For that, we can monkey-patch the notebook insert/delete methods in the controller
+  // to call scheduleOutlineUpdate (already done in app.js).
+
+  // --- API calls ---
 
   async function refreshEnvInfo() {
     try {
@@ -268,20 +351,24 @@ export function setupEnvManager({
     }
   }
 
-  /** Shows exactly one of the three views, hiding the other two. */
+  // --- View management ---
+
   function showView(view) {
     Object.entries(views).forEach(([key, el]) => {
       if (el) el.hidden = key !== view;
     });
     activeView = view;
     if (titleEl) titleEl.textContent = VIEW_LABELS[view] || '📦 ENVIRONMENT';
+    if (view === 'outline' && notebook) {
+      renderOutline();
+      startOutlineListening();
+      window.__outlineVisible = true;
+    } else {
+      stopOutlineListening();
+      window.__outlineVisible = false;
+    }
   }
 
-  /**
-   * Opens the given view. If that same view is already open, this instead
-   * closes the panel (toggle). If a *different* view is open, it is
-   * cancelled/replaced by the requested one — only one view is ever visible.
-   */
   function openView(view) {
     if (!views[view]) return;
 
@@ -303,6 +390,8 @@ export function setupEnvManager({
   function close() {
     panel.hidden = true;
     activeView = null;
+    stopOutlineListening();
+    window.__outlineVisible = false;
     if (onResize) onResize();
   }
 
@@ -319,5 +408,6 @@ export function setupEnvManager({
   });
   modeRadios.forEach((r) => r.addEventListener('change', syncSelectDisabled));
 
-  return { openView, close, refreshStatus: refreshEnvInfo };
+  // Expose scheduleOutlineUpdate so notebook can call it on cell add/delete/move
+  return { openView, close, refreshStatus: refreshEnvInfo, scheduleOutlineUpdate };
 }

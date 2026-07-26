@@ -1,28 +1,9 @@
 /**
  * cells/cellFactory.js
- * Builds a single cell's DOM (from the <template> tags) and its CodeMirror
- * instance, and wires up all of the cell-local UI events. Holds no shared
- * state of its own — all cross-cell state (selection, execution order, etc.)
- * lives in notebook/notebookController.js and is exposed to this factory via
- * the `hooks` callbacks below.
+ * Builds a single cell's DOM and CodeMirror instance.
  */
 import { moveLineUp, moveLineDown, toggleComment } from './editorCommands.js';
 
-/**
- * @param {string} id
- * @param {string} source - initial code
- * @param {{cellTemplate: HTMLTemplateElement, insertBarTemplate: HTMLTemplateElement}} templates
- * @param {object} hooks
- * @param {(id: string, opts: object) => void} hooks.onRun
- * @param {(id: string) => void} hooks.onRunButtonClick
- * @param {(id: string, delta: number) => void} hooks.onMove
- * @param {(id: string) => void} hooks.onDelete
- * @param {(id: string) => void} hooks.onSelect
- * @param {(id: string) => void} hooks.onEnterEdit
- * @param {(id: string) => void} hooks.onExitEdit
- * @param {(id: string) => void} hooks.onInsertAfter
- * @param {(cm: any) => void} registerAutocomplete
- */
 export function createCell(id, source, templates, hooks, registerAutocomplete) {
   const { cellTemplate, insertBarTemplate } = templates;
 
@@ -68,7 +49,13 @@ export function createCell(id, source, templates, hooks, registerAutocomplete) {
   });
   cell.cm = cm;
 
-  registerAutocomplete(cm);
+  // Pass the cell ID so hover can compute absolute line numbers
+  registerAutocomplete(cm, cell.id);
+
+  // Notify on any code change
+  cm.on('change', () => {
+    if (hooks.onCellChange) hooks.onCellChange(cell.id);
+  });
 
   cm.on('focus', () => hooks.onEnterEdit(cell.id));
   root.addEventListener('click', (e) => {

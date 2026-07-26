@@ -50,6 +50,7 @@ import { setupEnvManager } from './env/envManager.js';
   const envViewCurrent = document.getElementById('env-view-current');
   const envViewCreate = document.getElementById('env-view-create');
   const envViewPip = document.getElementById('env-view-pip');
+  const envViewOutline = document.getElementById('env-view-outline');
 
   const envModeRadios = Array.from(document.querySelectorAll('input[name="env-mode"]'));
   const envNamedSelect = document.getElementById('env-named-select');
@@ -72,6 +73,8 @@ import { setupEnvManager } from './env/envManager.js';
   const pipInstallBtn = document.getElementById('btn-pip-install');
   const pipStatusLine = document.getElementById('pip-status-line');
 
+  const outlineListEl = document.getElementById('outline-list');
+
   const cellTemplate = document.getElementById('cell-template');
   const insertBarTemplate = document.getElementById('insert-bar-template');
 
@@ -81,11 +84,30 @@ import { setupEnvManager } from './env/envManager.js';
   initMetricsStream();
 
   let notebook = null;
+  let reconnectToastShown = false;
 
   const runSocket = new ReconnectingSocket('/ws/run', {
     onMessage: (data) => notebook?.handleRunMessage(data),
-    onClose: () => showToast('⚠️ KERNEL CONNECTION LOST — RECONNECTING…', 'danger'),
+    onOpen: () => {
+      if (reconnectToastShown) {
+        showToast('🔄 KERNEL RECONNECTED', 'success');
+        reconnectToastShown = false;
+      }
+    },
+    onClose: () => {
+      if (!reconnectToastShown) {
+        showToast('⚠️ KERNEL CONNECTION LOST — RECONNECTING…', 'danger');
+        reconnectToastShown = true;
+      }
+    },
   });
+
+  // onCellChange callback to refresh outline when code changes
+  const onCellChange = () => {
+    if (envManager && typeof envManager.scheduleOutlineUpdate === 'function') {
+      envManager.scheduleOutlineUpdate();
+    }
+  };
 
   notebook = createNotebookController({
     container,
@@ -93,8 +115,12 @@ import { setupEnvManager } from './env/envManager.js';
     runSocket,
     showToast,
     registerAutocomplete,
+    onCellChange, // pass the callback
   });
+
+  // Expose notebook globally for autocomplete and envManager
   window.__jupy_notebook = notebook;
+
   setupTerminal(
     terminalToggleBtn,
     terminalCloseBtn,
@@ -113,12 +139,11 @@ import { setupEnvManager } from './env/envManager.js';
     titleEl: envPanelTitle,
     closeBtn: envCloseBtn,
     views: {
-    current: envViewCurrent,
-    create: envViewCreate,
-    pip: envViewPip,
-    outline: document.getElementById('env-view-outline')
-  },
-
+      current: envViewCurrent,
+      create: envViewCreate,
+      pip: envViewPip,
+      outline: envViewOutline,
+    },
     modeRadios: envModeRadios,
     namedSelect: envNamedSelect,
     createInput: envCreateInput,
@@ -138,13 +163,33 @@ import { setupEnvManager } from './env/envManager.js';
     createStatusLine: envCreateStatusLine,
     existingEnvsEl: envExistingList,
     pipStatusLine,
-    outlineListEl: document.getElementById('outline-list'),
-    notebook: notebook, // pass the notebook controller
+    outlineListEl,
+    notebook,
     showToast,
     onResize: () => setTimeout(() => notebook.refreshAllEditors(), 50),
     onEnvSwitched: () => showToast('🔄 KERNEL RESTARTED ON NEW ENVIRONMENT', 'danger'),
   });
   envManager.refreshStatus(); // populate the topbar ENV label on boot
+
+  // Monkey-patch notebook methods to trigger outline update on cell add/delete/move
+  const origInsert = notebook.insertCellAt;
+  notebook.insertCellAt = function(...args) {
+    const result = origInsert.apply(this, args);
+    envManager.scheduleOutlineUpdate();
+    return result;
+  };
+  const origDelete = notebook.deleteCell;
+  notebook.deleteCell = function(...args) {
+    const result = origDelete.apply(this, args);
+    envManager.scheduleOutlineUpdate();
+    return result;
+  };
+  const origMove = notebook.moveCell;
+  notebook.moveCell = function(...args) {
+    const result = origMove.apply(this, args);
+    envManager.scheduleOutlineUpdate();
+    return result;
+  };
 
   initRuntimeMenu({
     menu: runtimeMenu,

@@ -1,11 +1,6 @@
 /**
  * notebook/notebookController.js
- *
- * Owns all notebook state: the cell list, selection/edit-mode, and the
- * run/queue/interrupt/restart lifecycle. This is the direct replacement for
- * the big IIFE that used to live in static/js/notebook.js, split out from
- * DOM/CodeMirror construction (cells/cellFactory.js) and output rendering
- * (cells/cellOutput.js) so each concern can be read/tested on its own.
+ * Owns all notebook state.
  */
 import { createCell } from '../cells/cellFactory.js';
 import { clearCellOutput, appendCellOutput, appendCellPlot, appendCellStdinPrompt } from '../cells/cellOutput.js';
@@ -17,8 +12,9 @@ import { clearCellOutput, appendCellOutput, appendCellPlot, appendCellStdinPromp
  * @param {import('../core/socket.js').ReconnectingSocket} deps.runSocket
  * @param {(message: string, type?: string) => void} deps.showToast
  * @param {(cm: any) => void} deps.registerAutocomplete
+ * @param {() => void} [deps.onCellChange] - called whenever any cell's code changes
  */
-export function createNotebookController({ container, templates, runSocket, showToast, registerAutocomplete }) {
+export function createNotebookController({ container, templates, runSocket, showToast, registerAutocomplete, onCellChange }) {
   const cells = [];
   let idCounter = 0;
   let selectedId = null;
@@ -61,6 +57,10 @@ export function createNotebookController({ container, templates, runSocket, show
         onEnterEdit: (cellId) => enterEditMode(cellId),
         onExitEdit: (cellId) => exitEditMode(cellId),
         onInsertAfter: (cellId) => insertCellAt(indexOf(cellId) + 1, '', { focus: true }),
+        onCellChange: (cellId) => {
+          // Forward to the external callback if provided
+          if (onCellChange) onCellChange();
+        },
       },
       registerAutocomplete
     );
@@ -142,7 +142,6 @@ export function createNotebookController({ container, templates, runSocket, show
     selectCell(id);
   }
 
-  /** Moves the selection up (-1) or down (+1), clamped to the cell list bounds. */
   function selectAdjacent(delta) {
     if (!selectedId) return;
     const idx = indexOf(selectedId);
@@ -175,12 +174,6 @@ export function createNotebookController({ container, templates, runSocket, show
 
     if (runningCellId === id) {
       showToast('⚠️ CELL ALREADY RUNNING', 'warning');
-      // Advance focus to the next cell even though we're not re-running it —
-      // matches the "queued" branch below. Without this, Shift+Enter on a
-      // cell that is itself still executing (a loop, sleep(), waiting on
-      // stdin, or just enough websocket latency to notice) leaves the
-      // selection stuck instead of moving down, which is the one case that
-      // looked like "Shift+Enter sometimes doesn't advance."
       if (advance) advanceSelectionAfter(idx);
       return;
     }
@@ -197,7 +190,6 @@ export function createNotebookController({ container, templates, runSocket, show
         showToast('⚠️ CELL ALREADY QUEUED', 'warning');
       }
 
-      // Advance focus to the next cell without running it.
       if (advance) advanceSelectionAfter(idx);
       return;
     }
@@ -228,7 +220,6 @@ export function createNotebookController({ container, templates, runSocket, show
     runSocket.send({ action: 'run', code: cell.cm.getValue() });
   }
 
-  /** Feed this to the run socket's onMessage handler. */
   function handleRunMessage(data) {
     if (!runningCellId) return;
     const cell = getCell(runningCellId);
@@ -258,12 +249,6 @@ export function createNotebookController({ container, templates, runSocket, show
     }
   }
 
-  /**
-   * Shared restart implementation — hits POST /api/restart, wipes exec counts
-   * and outputs on success. Returns a promise<boolean> so the "Restart and
-   * run…" Runtime-menu actions can wait for the kernel to actually come back
-   * before submitting cells to it.
-   */
   async function performRestart() {
     try {
       const res = await fetch('/api/restart', { method: 'POST' });
@@ -298,7 +283,6 @@ export function createNotebookController({ container, templates, runSocket, show
     [...cells].forEach((cell) => runCell(cell.id, { advance: false }));
   }
 
-  /** Restarts the kernel, then (on success) runs every cell top to bottom. */
   async function restartAndRunAll() {
     const ok = await performRestart();
     if (ok) {
@@ -307,13 +291,6 @@ export function createNotebookController({ container, templates, runSocket, show
     }
   }
 
-  /**
-   * Restarts the kernel, then (on success) runs every cell from the top
-   * through a target cell — the currently selected cell if one is selected,
-   * otherwise the last cell that had already been run before the restart.
-   * If neither applies (nothing selected, nothing ever run) it falls back to
-   * just the first cell, rather than guessing and running the whole notebook.
-   */
   async function restartAndRunToSelected() {
     let targetIdx = selectedId ? indexOf(selectedId) : -1;
     if (targetIdx === -1) {
@@ -330,7 +307,6 @@ export function createNotebookController({ container, templates, runSocket, show
     }
   }
 
-  /** Replaces every cell in the notebook with the given list of source strings. */
   function loadNotebook(sources) {
     cells.forEach((c) => {
       c.dom.root.remove();
