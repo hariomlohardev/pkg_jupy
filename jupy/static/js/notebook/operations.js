@@ -3,7 +3,7 @@ import { clearCellOutput } from '../cells/cellOutput.js';
 export function createOperations(state, buildCell, reorderDom, selectCell, showToast, runSocket) {
   const { cells, indexOf, getCell, getSelectedIndices, pushOperation, executionQueue } = state;
 
-  function insertCellAt(index, source = '', { focus = false, type = 'code' } = {}) {
+  function insertCellAt(index, source = '', { focus = false, type = 'code', silent = false } = {}) {
     const cell = buildCell(source, type);
     cells.splice(index, 0, cell);
     reorderDom();
@@ -15,7 +15,9 @@ export function createOperations(state, buildCell, reorderDom, selectCell, showT
       selectCell(cell.id);
     }
     cell.dom.root.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    pushOperation({ type: 'insert', data: { index, cellId: cell.id, source, type } });
+    if (!silent) {
+      pushOperation({ type: 'insert', data: { index, cellId: cell.id, source, type } });
+    }
     return cell;
   }
 
@@ -39,8 +41,8 @@ export function createOperations(state, buildCell, reorderDom, selectCell, showT
     cells.splice(idx, 1);
     state.selectedIds = state.selectedIds.filter(cid => cid !== id);
     if (cells.length === 0) {
-      insertCellAt(0, '', { focus: true });
-    } else {
+      insertCellAt(0, '', { focus: true, silent: true });
+     } else {
       const newIdx = Math.min(idx, cells.length - 1);
       selectCell(cells[newIdx].id);
     }
@@ -101,7 +103,7 @@ export function createOperations(state, buildCell, reorderDom, selectCell, showT
     const before = lines.slice(0, line).join('\n');
     const after = lines.slice(line).join('\n');
     cm.setValue(before);
-    const newCell = insertCellAt(indexOf(id) + 1, after, { focus: true, type: cell.type });
+    const newCell = insertCellAt(indexOf(id) + 1, after, { focus: true, type: cell.type, silent: true });
     pushOperation({ type: 'split', data: { id, before, after, newId: newCell.id, type: cell.type } });
     return newCell;
   }

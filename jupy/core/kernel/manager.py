@@ -144,7 +144,7 @@ class KernelManager:
             return None
         try:
             proc = self.proc
-            if proc is None or proc.poll() is None:
+            if proc is None or proc.poll() is not None:
                 return None
             req = json.dumps({"action": "hover", "code": code, "line": line, "column": col}) + "\n"
             try: proc.stdin.write(req); proc.stdin.flush()
@@ -172,13 +172,13 @@ class KernelManager:
         return False
 
     def interrupt(self):
-        with self.comm_lock:
-            if self.proc and self.proc.poll() is None:
-                try:
-                    self.proc.stdin.write('{"action":"interrupt"}\n')
-                    self.proc.stdin.flush()
-                except:
-                    pass
+        proc = self.proc
+        if proc and proc.poll() is None:
+            try:
+                proc.stdin.write('{"action":"interrupt"}\n')
+                proc.stdin.flush()
+            except Exception:
+                pass
         return self.force_interrupt()
 
     def restart(self):
@@ -207,25 +207,37 @@ class KernelManager:
                     pass
 
     def handle_stdin_reply(self, value):
-        self.send_to_worker({"action": "stdin_reply", "value": value})
+        proc = self.proc
+        if proc and proc.poll() is None:
+            try:
+                proc.stdin.write(json.dumps({"action": "stdin_reply", "value": value}) + "\n")
+                proc.stdin.flush()
+            except Exception:
+                pass
 
     def execute(self, code, ws_send_fn, timeout=None, language='python'):
         if language != 'python':
             self.exec_count += 1
-            # FIX #2: Pass exec_count
             self._execute_other_language(code, ws_send_fn, language, timeout, self.exec_count)
             return
-            
+
         self.exec_count += 1
         exec_count = self.exec_count
-        
+
         with self.comm_lock:
+            try:
+                self._ensure_kernel_proc()
+            except Exception as e:
+                ws_send_fn({"type": "stderr", "text": f"Kernel failed to start: {e}"})
+                ws_send_fn({"type": "complete", "exec_count": exec_count})
+                return
+
             proc = self.proc
             if proc is None or proc.poll() is not None:
                 ws_send_fn({"type": "stderr", "text": "Kernel not running. Restart required."})
                 ws_send_fn({"type": "complete", "exec_count": exec_count})
                 return
-                
+
             try:
                 proc.stdin.write(json.dumps({"action": "execute", "code": code}) + "\n")
                 proc.stdin.flush()
@@ -233,52 +245,115 @@ class KernelManager:
                 ws_send_fn({"type": "stderr", "text": f"Failed to send code: {e}"})
                 ws_send_fn({"type": "complete", "exec_count": exec_count})
                 return
-                
+
             completed_normally = False
-            while proc.poll() is None:
-                line = proc.stdout.readline()
-                if not line:
-                    break
-                line = line.rstrip('\n')
-                if line.startswith("---JUPY_STDOUT---"):
-                    continue
-                elif line.startswith("---JUPY_STDERR---"):
-                    continue
-                elif line.startswith("---JUPY_DISPLAY_DATA---"):
-                    data_line = proc.stdout.readline().strip()
-                    try:
-                        mime = json.loads(data_line)
-                        ws_send_fn({"type": "display", "data": mime})
-                    except:
-                        pass
-                elif line.startswith("---JUPY_WIDGET---"):
-                    widget_line = proc.stdout.readline().strip()
-                    try:
-                        widget_msg = json.loads(widget_line)
-                        ws_send_fn({"type": "widget", "data": widget_msg})
-                    except:
-                        pass
-                elif line.startswith("---JUPY_STDIN_REQ:"):
-                    prompt = line.split("---JUPY_STDIN_REQ:")[1].split("---")[0]
-                    ws_send_fn({"type": "stdin_request", "prompt": prompt})
-                elif line.startswith("---JUPY_LOAD_CELL---"):
-                    load_line = proc.stdout.readline().strip()
-                    try:
-                        content = json.loads(load_line)["content"]
-                        ws_send_fn({"type": "load", "data": {"content": content}})
-                    except:
-                        pass
-                elif "---JUPY_CELL_COMPLETE---" in line:
-                    ws_send_fn({"type": "complete", "exec_count": exec_count})
-                    completed_normally = True
-                    return
-                else:
-                    if line.strip():
-                        ws_send_fn({"type": "stdout", "text": line + "\n"})
-            
-            # FIX #3: Ensure complete message is sent if interrupted
+            timed_out = threading.Event()
+            timer = None
+
+            if timeout:
+                def _kill_on_timeout():
+                    timed_out.set()
+                    _kill_process_tree(proc)
+
+                timer = threading.Timer(timeout, _kill_on_timeout)
+                timer.daemon = True
+                timer.start()
+
+            stream = None
+            in_plots = False
+            plot_lines = []
+
+            try:
+                while proc.poll() is None:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+
+                    line = line.rstrip('\n')
+
+                    if line == "---JUPY_STDOUT---":
+                        stream = "stdout"
+                        continue
+
+                    if line == "---JUPY_STDERR---":
+                        stream = "stderr"
+                        continue
+
+                    if line == "---JUPY_PLOTS_START---":
+                        in_plots = True
+                        plot_lines = []
+                        continue
+
+                    if line == "---JUPY_PLOTS_END---":
+                        in_plots = False
+                        if plot_lines:
+                            ws_send_fn({"type": "plot", "html": "\n".join(plot_lines)})
+                        continue
+
+                    if in_plots:
+                        plot_lines.append(line)
+                        continue
+
+                    if line.startswith("---JUPY_DISPLAY_DATA---"):
+                        data_line = proc.stdout.readline().strip()
+                        try:
+                            mime = json.loads(data_line)
+                            ws_send_fn({"type": "display", "data": mime})
+                        except Exception:
+                            pass
+                        continue
+
+                    if line.startswith("---JUPY_WIDGET---"):
+                        widget_line = proc.stdout.readline().strip()
+                        try:
+                            widget_msg = json.loads(widget_line)
+                            ws_send_fn({"type": "widget", "data": widget_msg})
+                        except Exception:
+                            pass
+                        continue
+
+                    if line.startswith("---JUPY_STDIN_REQ:"):
+                        prompt = line.split("---JUPY_STDIN_REQ:")[1].split("---")[0]
+                        ws_send_fn({"type": "stdin_request", "prompt": prompt})
+                        continue
+
+                    if line.startswith("---JUPY_LOAD_CELL---"):
+                        load_line = proc.stdout.readline().strip()
+                        try:
+                            content = json.loads(load_line)["content"]
+                            ws_send_fn({"type": "load", "data": {"content": content}})
+                        except Exception:
+                            pass
+                        continue
+
+                    if line.startswith("---JUPY_DEBUGGER_PAUSED:"):
+                        payload = line[len("---JUPY_DEBUGGER_PAUSED:"):]
+                        if payload.endswith("---"):
+                            payload = payload[:-3]
+                        if self._debugger_ws:
+                            try:
+                                self._debugger_ws(json.loads(payload))
+                            except Exception:
+                                pass
+                        continue
+
+                    if "---JUPY_CELL_COMPLETE---" in line:
+                        ws_send_fn({"type": "complete", "exec_count": exec_count})
+                        completed_normally = True
+                        return
+
+                    if stream:
+                        ws_send_fn({"type": stream, "text": line + "\n"})
+
+            finally:
+                if timer:
+                    timer.cancel()
+
             if not completed_normally:
-                ws_send_fn({"type": "stderr", "text": "\n⏹ Execution interrupted by user.\n"})
+                if timed_out.is_set():
+                    ws_send_fn({"type": "stderr", "text": f"\n⏱ Execution timed out after {timeout}s.\n"})
+                else:
+                    ws_send_fn({"type": "stderr", "text": "\n⏹ Execution interrupted by user.\n"})
                 ws_send_fn({"type": "complete", "exec_count": exec_count})
 
     def _execute_other_language(self, code, ws_send_fn, language, timeout, exec_count):
@@ -361,10 +436,13 @@ class KernelManager:
                     if not line:
                         break
                     if line.startswith("---JUPY_DF_HTML:"):
-                        html = line.replace("---JUPY_DF_HTML:", "").strip()
-                        if html.endswith("---"):
-                            html = html[:-3]
-                        return html
+                        json_str = line.replace("---JUPY_DF_HTML:", "").strip()
+                        if json_str.endswith("---"):
+                            json_str = json_str[:-3]
+                        try:
+                            return json.loads(json_str)
+                        except Exception:
+                            return "<p>Invalid DataFrame preview payload</p>"
                 return "<p>No DataFrame found</p>"
             except Exception:
                 return "<p>Error fetching DataFrame</p>"

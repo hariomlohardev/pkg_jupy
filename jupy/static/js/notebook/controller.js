@@ -68,7 +68,7 @@ export function createNotebookController({
         onInsertAfter: (cellId) => operations.insertCellAt(state.indexOf(cellId) + 1, '', { focus: true }),
         onCellChange: (cellId) => { if (onCellChange) onCellChange(); },
         onDragStart: (cellId, e) => { e.dataTransfer.setData('text/plain', cellId); },
-        onDragEnd: () => {},
+        onDragEnd: () => { },
       },
       registerAutocomplete,
       type
@@ -104,55 +104,59 @@ export function createNotebookController({
     while (state.cells.length > 0) {
       operations.deleteCell(state.cells[0].id, true);
     }
-    cellDataArray.forEach((item, index) => {
-      const type = item.type || 'code';
-      const source = item.source || '';
-      operations.insertCellAt(index, source, { type });
-    });
-    if (state.cells.length > 0) {
-      selection.selectCell(state.cells[0].id);
-      state.cells[0].cm.focus();
-    }
+
+    state.undoStack.length = 0;
+    state.redoStack.length = 0;
+
   }
 
-  // ===== Public API =====
+    // ===== Public API =====
     // ===== Public API =====
   return {
-    insertCellAt: operations.insertCellAt,
-    deleteCell: operations.deleteCell,
-    moveCell: operations.moveCell,
-    selectCell: selection.selectCell,
-    enterEditMode: (id) => { selection.enterEditMode(id); state.getCell(id).cm.focus(); },
-    exitEditMode: selection.exitEditMode,
-    selectAdjacent: selection.selectAdjacent,
-    runCell: execution.runCell,
-    handleRunMessage: execution.handleRunMessage,
-    runAll: execution.runAll,
-    restartKernel: () => { /* implemented in app.js */ },
-    restartAndRunAll: () => { /* implemented in app.js */ },
-    restartAndRunToSelected: () => { /* implemented in app.js */ },
-    interruptKernel: () => { /* implemented in app.js */ },
-    loadNotebook,
-    refreshAllEditors: () => state.cells.forEach(c => c.cm.refresh()),
-    getSelectedId: () => state.selectedId,
-    getEditingId: () => state.editingId,
-    getCells: () => state.cells,
-    getSelectedIds: () => state.selectedIds,
-    getSelectedIndices: state.getSelectedIndices,
-    deselectAll: selection.deselectAll,
-    copyCells: clipboard.copyCells,
-    cutCells: clipboard.cutCells,
-    pasteCells: clipboard.pasteCells,
-    undo: undoRedo.undo,
-    redo: undoRedo.redo,
-    mergeSelectedCells: operations.mergeSelectedCells,
-    splitCellAtCursor: operations.splitCellAtCursor,
-    findInNotebook: findReplace.findInNotebook,
-    replaceInNotebook: findReplace.replaceInNotebook,
-    toggleLineNumbers: lineNumbers.toggle,
-    togglePresentation: presentation.toggle,
-    setStatus,
-    executeNextInQueue: execution.executeNextInQueue,
-    clearExecutionQueue: execution.clearExecutionQueue, // FIX #11: Added this line
-  };
+      insertCellAt: operations.insertCellAt,
+      deleteCell: operations.deleteCell,
+      moveCell: operations.moveCell,
+      selectCell: selection.selectCell,
+      enterEditMode: (id) => {
+        selection.enterEditMode(id);
+        const cell = state.getCell(id);
+        if (!cell) return;
+        if (typeof cell.enterEdit === 'function') {
+          cell.enterEdit();
+        } else {
+          cell.cm.focus();
+        }
+      },
+      exitEditMode: selection.exitEditMode,
+      selectAdjacent: selection.selectAdjacent,
+      runCell: execution.runCell,
+      handleRunMessage: execution.handleRunMessage,
+      runAll: execution.runAll,
+      restartKernel: () => { /* implemented in app.js */ },
+      restartAndRunAll: () => { /* implemented in app.js */ },
+      restartAndRunToSelected: () => { /* implemented in app.js */ },
+      interruptKernel: () => { /* implemented in app.js */ },
+      loadNotebook,
+      refreshAllEditors: () => state.cells.forEach(c => c.cm.refresh()),
+      getSelectedId: () => state.selectedId,
+      getEditingId: () => state.editingId,
+      getCells: () => state.cells,
+      getSelectedIds: () => state.selectedIds,
+      getSelectedIndices: state.getSelectedIndices,
+      deselectAll: selection.deselectAll,
+      copyCells: clipboard.copyCells,
+      cutCells: clipboard.cutCells,
+      pasteCells: clipboard.pasteCells,
+      undo: undoRedo.undo,
+      redo: undoRedo.redo,
+      mergeSelectedCells: operations.mergeSelectedCells,
+      splitCellAtCursor: operations.splitCellAtCursor,
+      findInNotebook: findReplace.findInNotebook,
+      replaceInNotebook: findReplace.replaceInNotebook,
+      toggleLineNumbers: lineNumbers.toggle,
+      togglePresentation: presentation.toggle,
+      setStatus,
+      executeNextInQueue: execution.executeNextInQueue,
+      clearExecutionQueue: execution.clearExecutionQueue, // FIX #11: Added this line
+    };
 }

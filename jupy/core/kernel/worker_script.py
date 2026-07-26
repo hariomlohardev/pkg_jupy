@@ -10,6 +10,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 # Global namespace (defined once)
 # ----------------------------------------------------------------------
 namespace = {"__name__": "__main__"}
+_original_stdout = sys.stdout
 
 # ----------------------------------------------------------------------
 # Debugger globals
@@ -17,28 +18,62 @@ namespace = {"__name__": "__main__"}
 _breakpoints = []
 _debugger_enabled = False
 _debugger_event = threading.Event()
-_debugger_mode = None
-_debugger_ws = None
+_debugger_mode = "continue"
+_debugger_step_frame = None
+
+def _debugger_send_paused(frame):
+    payload = {
+        "type": "paused",
+        "file": frame.f_code.co_filename,
+        "line": frame.f_lineno,
+        "frame": str(frame.f_locals)
+    }
+    _original_stdout.write("---JUPY_DEBUGGER_PAUSED:" + json.dumps(payload) + "---\n")
+    _original_stdout.flush()
+
 
 def _debugger_trace(frame, event, arg):
+    global _debugger_step_frame, _debugger_mode
+
     if not _debugger_enabled:
+        return None
+
+    if event != "line":
         return _debugger_trace
+
+    if _debugger_mode == "step_out":
+        if frame is not _debugger_step_frame:
+            return _debugger_trace
+    elif _debugger_mode == "step_over":
+        if frame is not _debugger_step_frame:
+            return _debugger_trace
+
+    hit = False
     filename = frame.f_code.co_filename
     lineno = frame.f_lineno
+
     for bp in _breakpoints:
         if bp.get("file") == filename and bp.get("line") == lineno:
-            if _debugger_ws:
-                _debugger_ws({"type": "paused", "file": filename, "line": lineno, "frame": str(frame.f_locals)})
-            _debugger_event.clear()
-            _debugger_event.wait()
-            if _debugger_mode == "stop":
-                return None
-            elif _debugger_mode == "continue":
-                return _debugger_trace
-            elif _debugger_mode == "step_over":
-                return _debugger_trace
-            elif _debugger_mode == "step_into":
-                return _debugger_trace
+            hit = True
+            break
+
+    if hit or _debugger_mode in ("step_into", "step_over", "step_out"):
+        _debugger_send_paused(frame)
+        _debugger_event.clear()
+        _debugger_event.wait()
+
+        if _debugger_mode == "stop":
+            return None
+
+        if _debugger_mode == "step_into":
+            _debugger_step_frame = frame
+        elif _debugger_mode == "step_over":
+            _debugger_step_frame = frame
+        elif _debugger_mode == "step_out":
+            _debugger_step_frame = frame.f_back
+        elif _debugger_mode == "continue":
+            _debugger_step_frame = None
+
     return _debugger_trace
 
 # ----------------------------------------------------------------------
@@ -450,7 +485,10 @@ def _magic_reload_ext(args, cell, namespace):
 
 def _magic_time(args, cell, namespace):
     code = ' '.join(args) if args else ''
-    if not code: return "Usage: %time statement"
+    if cell is not None and cell.strip():
+        code = cell
+    if not code.strip():
+        return "Usage: %time statement"
     start = time.perf_counter()
     try: exec(code, namespace)
     except Exception as e: return f"Error: {e}"
@@ -466,8 +504,9 @@ def _magic_timeit(args, cell, namespace):
     try:
         timer = timeit.Timer(code, globals=namespace)
         number, _ = timer.autorange()
-        result = timer.timeit(number)
-        return f"{result:.6f} seconds (average over {number} runs)"
+        total = timer.timeit(number)
+        average = total / number
+        return f"{average:.6f} seconds (average over {number} runs)"
     except Exception as e: return f"Error in timeit: {e}"
 
 def _magic_cd(args, cell, namespace):
@@ -632,9 +671,9 @@ class WidgetProxy:
         
     def _send_widget_event(self, event, data):
         msg = {'event': event, 'widget_id': self.id, 'type': self.type, 'data': data}
-        sys.stdout.write("---JUPY_WIDGET---\n")
-        sys.stdout.write(json.dumps(msg) + "\n")
-        sys.stdout.flush()
+        _original_stdout.write("---JUPY_WIDGET---\n")
+        _original_stdout.write(json.dumps(msg) + "\n")
+        _original_stdout.flush()
         
     def set_state(self, **kwargs):
         self.kwargs.update(kwargs)
@@ -701,9 +740,9 @@ class Link:
                 'transform': transform
             }
         }
-        sys.stdout.write("---JUPY_WIDGET---\n")
-        sys.stdout.write(json.dumps(msg) + "\n")
-        sys.stdout.flush()
+        _original_stdout.write("---JUPY_WIDGET---\n")
+        _original_stdout.write(json.dumps(msg) + "\n")
+        _original_stdout.flush()
     def propagate(self, value):
         if self.transform: value = self.transform(value)
         target = _widgets.get(self.target_id)
@@ -789,9 +828,9 @@ namespace['interact'] = interact
 # Display, plots, input, warmup – WITH FULL IPYWIDGETS SUPPORT
 # ----------------------------------------------------------------------
 def _send_display_data(mimebundle):
-    sys.stdout.write("---JUPY_DISPLAY_DATA---\n")
-    sys.stdout.write(json.dumps(mimebundle) + "\n")
-    sys.stdout.flush()
+    _original_stdout.write("---JUPY_DISPLAY_DATA---\n")
+    _original_stdout.write(json.dumps(mimebundle) + "\n")
+    _original_stdout.flush()
 
 def _encode_binary(data):
     if isinstance(data, bytes): return base64.b64encode(data).decode('ascii')
@@ -893,11 +932,23 @@ threading.Thread(target=_warmup_jedi, daemon=True).start()
 
 def _custom_input(prompt=""):
     prompt_str = str(prompt)
-    sys.stdout.write(f"---JUPY_STDIN_REQ:{prompt_str}---\n")
-    sys.stdout.flush()
+    _original_stdout.write(f"---JUPY_STDIN_REQ:{prompt_str}---\n")
+    _original_stdout.flush()
+
     line = sys.stdin.readline()
-    if not line: raise KeyboardInterrupt("Input stream closed.")
-    return line.rstrip("\r\n")
+    if not line:
+        raise KeyboardInterrupt("Input stream closed.")
+
+    line = line.rstrip("\r\n")
+
+    try:
+        data = json.loads(line)
+        if isinstance(data, dict) and data.get("action") == "stdin_reply":
+            return data.get("value", "")
+    except Exception:
+        pass
+
+    return line
 builtins.input = _custom_input
 
 # ----------------------------------------------------------------------
@@ -951,7 +1002,7 @@ while True:
                     if isinstance(obj, pd.DataFrame): html = obj.head(rows).to_html()
                     elif hasattr(obj, 'to_html'): html = obj.to_html()
                 except: pass
-            sys.stdout.write(f"---JUPY_DF_HTML:{html}---\n")
+            sys.stdout.write(f"---JUPY_DF_HTML:{json.dumps(html)}---\n")
             sys.stdout.flush()
         elif action == "set_breakpoints":
             breakpoints = data.get("breakpoints", [])
@@ -962,15 +1013,24 @@ while True:
         elif action == "debugger":
             cmd = data.get("cmd")
             arg = data.get("arg")
+
             if cmd == "step":
+                if arg in ("over", "step_over"):
+                    _debugger_mode = "step_over"
+                elif arg in ("into", "step_into"):
+                    _debugger_mode = "step_into"
+                elif arg in ("out", "step_out"):
+                    _debugger_mode = "step_out"
+                else:
+                    _debugger_mode = arg
                 _debugger_event.set()
-                _debugger_mode = arg
             elif cmd == "continue":
                 _debugger_event.set()
                 _debugger_mode = "continue"
             elif cmd == "stop":
                 _debugger_event.set()
                 _debugger_mode = "stop"
+
             sys.stdout.write("---JUPY_DEBUGGER_ACK---\n")
             sys.stdout.flush()
         elif action == "execute":

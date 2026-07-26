@@ -3,7 +3,7 @@ import importlib
 import keyword
 import re
 import sys
-from jupy.core.venv import VENV_PYTHON
+
 
 _jedi_env = None
 
@@ -14,7 +14,7 @@ def get_jedi_env():
     if _jedi_env is None:
         try:
             import jedi
-            _jedi_env = jedi.get_system_environment(VENV_PYTHON)
+            _jedi_env = jedi.get_system_environment(sys.executable)
         except Exception:
             _jedi_env = False
     return _jedi_env

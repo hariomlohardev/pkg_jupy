@@ -101,9 +101,8 @@ import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
         if (window.__jupy_widgetManager) {
           window.__jupy_widgetManager.handleMessage(data.data);
         }
-      } else {
-        notebook?.handleRunMessage(data);
       }
+      notebook?.handleRunMessage(data);
     },
     onOpen: () => {
       if (reconnectToastShown) {
@@ -256,12 +255,13 @@ import { appendCellOutput } from './cells/cellOutput.js'; // FIX #5
       }
 
       this.getCells().forEach((c) => {
-        c.execCount = null;
-        c.dom.execCountEl.textContent = '[\u00A0]';
-        const output = c.dom.outputEl;
-        output.hidden = true;
-        output.innerHTML = '';
-      });
+         c.execCount = null;
+         c.outputs = [];
+         c.dom.execCountEl.textContent = '[\u00A0]';
+         const output = c.dom.outputEl;
+         output.hidden = true;
+         output.innerHTML = '';
+       });
       showToast('🔄 KERNEL RESTARTED', 'danger');
       return true;
     } catch (err) {

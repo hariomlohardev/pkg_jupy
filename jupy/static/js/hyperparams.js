@@ -32,6 +32,13 @@ export function initHyperparams(notebook) {
     });
     document.querySelector('.topbar-actions').appendChild(btn);
 
+   function toPythonLiteral(value) {
+     if (typeof value === 'boolean') return value ? 'True' : 'False';
+     if (typeof value === 'number') return String(value);
+     if (typeof value === 'string') return JSON.stringify(value);
+     return JSON.stringify(value);
+   }
+
     function showHyperparamsDialog(cell, params) {
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:99999; display:flex; align-items:center; justify-content:center;';
@@ -69,7 +76,7 @@ export function initHyperparams(notebook) {
             let newCode = cell.cm.getValue();
             for (const [name, val] of Object.entries(replacements)) {
                 const regex = new RegExp(`^\\s*${name}\\s*=\\s*[^#]+`, 'm');
-                const replacement = `${name} = ${JSON.stringify(val)}`;
+                const replacement = `${name} = ${toPythonLiteral(val)}`;
                 newCode = newCode.replace(regex, replacement);
             }
             cell.cm.setValue(newCode);

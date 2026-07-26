@@ -122,12 +122,8 @@ export function initShortcuts(actions) {
       return;
     }
 
-    // Presentation mode: Ctrl+Shift+P
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'p') {
-      e.preventDefault();
-      actions.togglePresentation();
-      return;
-    }
+    // Presentation mode shortcut removed to avoid conflict with command palette.
+    // Use the presentation button instead.
 
     if (isEditing) {
       if (e.key === 'Escape') {

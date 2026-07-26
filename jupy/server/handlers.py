@@ -28,8 +28,8 @@ def get_kernel():
     if _kernel is None:
         print("[Jupy] Importing kernel for the first time...", flush=True)
         try:
-            from jupy.core.kernel.manager import KernelManager
-            _kernel = KernelManager()
+            from jupy.core.kernel import kernel as _kernel_singleton
+            _kernel = _kernel_singleton
             print("[Jupy] Kernel imported successfully.", flush=True)
         except Exception as e:
             print(f"[Jupy] ERROR importing kernel: {e}", flush=True)
@@ -43,6 +43,16 @@ def get_kernel_optional():
     if _kernel is not None:
         return _kernel
     return None
+
+def _safe_join(base, path):
+    base = os.path.realpath(base)
+    full = os.path.realpath(os.path.join(base, path))
+    try:
+        if os.path.commonpath([base, full]) != base:
+            return None
+    except Exception:
+        return None
+    return full
 
 class JupyHTTPHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -117,8 +127,8 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
             elif self.path == "/api/files/list":
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 path = data.get("path", ".")
-                full = os.path.abspath(os.path.join(os.getcwd(), path))
-                if not full.startswith(os.getcwd()):
+                full = _safe_join(os.getcwd(), path)
+                if full is None:
                     self._send_json({"error": "Access denied"})
                     return
                 try:
@@ -139,8 +149,8 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
             elif self.path == "/api/files/read":
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 path = data.get("path", "")
-                full = os.path.abspath(os.path.join(os.getcwd(), path))
-                if not full.startswith(os.getcwd()):
+                full = _safe_join(os.getcwd(), path)
+                if full is None:
                     self._send_json({"error": "Access denied"})
                     return
                 try:
@@ -153,8 +163,8 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
             elif self.path == "/api/files/delete":
                 data = json.loads(post_data.decode("utf-8")) if post_data else {}
                 path = data.get("path", "")
-                full = os.path.abspath(os.path.join(os.getcwd(), path))
-                if not full.startswith(os.getcwd()):
+                full = _safe_join(os.getcwd(), path)
+                if full is None:
                     self._send_json({"error": "Access denied"})
                     return
                 try:
@@ -173,9 +183,9 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 if not old or not new:
                     self._send_json({"error": "Missing old or new name"})
                     return
-                old_full = os.path.abspath(os.path.join(os.getcwd(), old))
-                new_full = os.path.abspath(os.path.join(os.getcwd(), new))
-                if not old_full.startswith(os.getcwd()) or not new_full.startswith(os.getcwd()):
+                old_full = _safe_join(os.getcwd(), old)
+                new_full = _safe_join(os.getcwd(), new)
+                if old_full is None or new_full is None:
                     self._send_json({"error": "Access denied"})
                     return
                 try:
@@ -377,8 +387,12 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
             source = cell.get("source", "")
             outputs = cell.get("outputs", [])
             if cell_type == "markdown":
-                safe_source = html.escape(source)
-                html_content += f'<div class="cell cell-markdown">{safe_source}</div>'
+                safe_md = source.replace("</script>", "<\\/script>")
+                html_content += (
+                    '<div class="cell cell-markdown">'
+                    f'<script type="text/markdown">{safe_md}</script>'
+                    '</div>'
+                )
             else:
                 safe_source = html.escape(source)
                 html_content += f'<div class="cell cell-code"><pre>{safe_source}</pre>'
@@ -399,7 +413,17 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                             safe_text = html.escape(data.get("text/plain", str(data)))
                             html_content += f'<div class="cell-output">{safe_text}</div>'
                 html_content += '</div>'
-        html_content += "</body></html>"
+        html_content += """
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script>
+  document.querySelectorAll('.cell-markdown script[type="text/markdown"]').forEach(el => {
+    const div = document.createElement('div');
+    div.innerHTML = window.marked ? marked.parse(el.textContent) : el.textContent;
+    el.replaceWith(div);
+  });
+</script>
+</body></html>
+"""
         return html_content
 
     def _export_to_py(self, notebook_json):
@@ -502,6 +526,7 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 traceback.print_exc()
 
     def handle_terminal_ws(self):
+        ws_lock = threading.Lock()
         kernel = get_kernel()
         env_info = kernel.env_info
         venv_dir = env_info["path"]
@@ -526,8 +551,9 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                     if chunk:
                         text = chunk.decode("utf-8", errors="replace")
                         frame = make_ws_frame(json.dumps({"type": "output", "data": text}))
-                        self.wfile.write(frame)
-                        self.wfile.flush()
+                        with ws_lock:
+                            self.wfile.write(frame)
+                            self.wfile.flush()
                     else:
                         break
                 except Exception:
@@ -544,7 +570,8 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                     pass
                 break
             if opcode == 0x9:
-                self._ws_handle_ping(msg)
+                with ws_lock:
+                    self._ws_handle_ping(msg)
                 continue
             try:
                 data = json.loads(msg)
@@ -556,6 +583,7 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 pass
 
     def handle_fs_ws(self):
+
         try:
             import watchdog.observers
             import watchdog.events
@@ -576,7 +604,12 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 if not event.is_directory and event.src_path.endswith('.ipynb'):
                     self.ws_send({"type": "file_changed", "path": event.src_path})
 
-        ws_send = lambda data: self.wfile.write(make_ws_frame(json.dumps(data))) and self.wfile.flush()
+        ws_lock = threading.Lock()
+
+        def ws_send(data):
+            with ws_lock:
+                self.wfile.write(make_ws_frame(json.dumps(data)))
+                self.wfile.flush()
         observer = watchdog.observers.Observer()
         observer.schedule(NotebookFileHandler(ws_send), os.getcwd(), recursive=False)
         observer.start()
@@ -607,11 +640,11 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 req = json.loads(msg)
                 action = req.get("action")
                 if action == "step_over":
-                    kernel.debugger_step("over")
+                    kernel.debugger_step("step_over")
                 elif action == "step_into":
-                    kernel.debugger_step("into")
+                    kernel.debugger_step("step_into")
                 elif action == "step_out":
-                    kernel.debugger_step("out")
+                    kernel.debugger_step("step_out")
                 elif action == "continue":
                     kernel.debugger_continue()
                 elif action == "stop":

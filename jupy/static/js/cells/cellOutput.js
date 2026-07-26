@@ -59,7 +59,7 @@ export function appendWidget(cell, widgetData) {
   const container = document.createElement('div');
   container.className = 'widget-container';
   if (window.__jupy_widgetManager) {
-    window.__jupy_widgetManager.renderWidget(widgetData, container);
+    window.__jupy_widgetManager.renderWidget(widgetData.widget_id, container);
   } else {
     container.textContent = 'Widget manager not available';
   }

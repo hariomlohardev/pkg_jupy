@@ -70,69 +70,90 @@ export function createCell(id, source, templates, hooks, registerAutocomplete, t
   if (type === 'markdown') mode = 'markdown';
   else if (type === 'raw') mode = 'text';
 
-  const cm = CodeMirror(editorHost, {
-    value: source,
-    mode: mode,
-    theme: 'brutalism',
-    lineNumbers: false,
-    viewportMargin: Infinity,
-    indentUnit: 4,
-    tabSize: 4,
-    indentWithTabs: false,
-    autoCloseBrackets: true,
-        extraKeys: {
-      'Shift-Enter': (editor) => {
-        if (cell.type === 'markdown') {
-          renderMarkdown(cell);
-          hooks.onExitEdit(cell.id);
-          hooks.onRun(cell.id, { advance: true }); // Advance to next cell
-        } else {
-          hooks.onRun(cell.id, { advance: true });
-        }
-      },
-      'Ctrl-Enter': (editor) => {
-        if (cell.type === 'markdown') {
-          renderMarkdown(cell);
-          hooks.onExitEdit(cell.id);
-        } else {
-          if (editor.state.completionActive) editor.state.completionActive.close();
-          hooks.onRun(cell.id, { advance: false });
-        }
-      },
-      'Cmd-Enter': (editor) => {
-        if (cell.type === 'markdown') {
-          renderMarkdown(cell);
-          hooks.onExitEdit(cell.id);
-        } else {
-          if (editor.state.completionActive) editor.state.completionActive.close();
-          hooks.onRun(cell.id, { advance: false });
-        }
-      },
-      'Alt-Enter': (editor) => {
-        if (cell.type === 'markdown') {
-          renderMarkdown(cell);
-          hooks.onExitEdit(cell.id);
-          hooks.onRun(cell.id, { insertBelow: true });
-        } else {
-          if (editor.state.completionActive) editor.state.completionActive.close();
-          hooks.onRun(cell.id, { insertBelow: true });
-        }
-      },
-      'Esc': () => {
-        if (cell.type === 'markdown' && !cell.isPreview) {
-          renderMarkdown(cell);
-          hooks.onExitEdit(cell.id);
-        } else {
-          hooks.onExitEdit(cell.id);
-        }
-      },
-      'Alt-Up': moveLineUp,
-      'Alt-Down': moveLineDown,
-      'Ctrl-/': toggleComment,
-      'Cmd-/': toggleComment,
-    },
-  });
-  cell.cm = cm;
+   const cm = CodeMirror(editorHost, {
+     value: source,
+     mode: mode,
+     theme: 'brutalism',
+     lineNumbers: false,
+     foldGutter: true,
+     gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
+     viewportMargin: Infinity,
+     indentUnit: 4,
+     tabSize: 4,
+     indentWithTabs: false,
+     autoCloseBrackets: true,
+     extraKeys: {
+       'Shift-Enter': (editor) => {
+         if (cell.type === 'markdown') {
+           renderMarkdown(cell);
+           hooks.onExitEdit(cell.id);
+           hooks.onRun(cell.id, { advance: true });
+         } else {
+           hooks.onRun(cell.id, { advance: true });
+         }
+       },
+       'Ctrl-Enter': (editor) => {
+         if (cell.type === 'markdown') {
+           renderMarkdown(cell);
+           hooks.onExitEdit(cell.id);
+         } else {
+           if (editor.state.completionActive) editor.state.completionActive.close();
+           hooks.onRun(cell.id, { advance: false });
+         }
+       },
+       'Cmd-Enter': (editor) => {
+         if (cell.type === 'markdown') {
+           renderMarkdown(cell);
+           hooks.onExitEdit(cell.id);
+         } else {
+           if (editor.state.completionActive) editor.state.completionActive.close();
+           hooks.onRun(cell.id, { advance: false });
+         }
+       },
+       'Alt-Enter': (editor) => {
+         if (cell.type === 'markdown') {
+           renderMarkdown(cell);
+           hooks.onExitEdit(cell.id);
+           hooks.onRun(cell.id, { insertBelow: true });
+         } else {
+           if (editor.state.completionActive) editor.state.completionActive.close();
+           hooks.onRun(cell.id, { insertBelow: true });
+         }
+       },
+       'Esc': () => {
+         if (cell.type === 'markdown' && !cell.isPreview) {
+           renderMarkdown(cell);
+           hooks.onExitEdit(cell.id);
+         } else {
+           hooks.onExitEdit(cell.id);
+         }
+       },
+       'Alt-Up': moveLineUp,
+       'Alt-Down': moveLineDown,
+       'Ctrl-/': toggleComment,
+       'Cmd-/': toggleComment,
+     },
+   });
+
+   // ⚠️ THIS LINE IS CRITICAL — do not remove or move it
+   cell.cm = cm;
+
+   cell.enterEdit = () => {
+     if (cell.type === 'markdown') {
+       setMarkdownEdit(cell);
+     } else {
+       cm.refresh();
+       cm.focus();
+     }
+   };
+  cell.enterEdit = () => {
+    if (cell.type === 'markdown') {
+      setMarkdownEdit(cell);
+    } else {
+      cm.refresh();
+      cm.focus();
+    }
+  };
 
   // Fallback keydown listener on root
   root.addEventListener('keydown', (e) => {

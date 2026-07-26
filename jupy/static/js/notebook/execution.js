@@ -66,6 +66,7 @@ export function createExecution(state, runSocket, showToast, setStatus, operatio
 
     const language = cell.language || 'python';
     console.log('[Jupy] Executing cell', id, 'language:', language);
+    setStatus('busy');
     runSocket.send({
       action: 'run',
       code: cell.cm.getValue(),
