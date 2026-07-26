@@ -34,6 +34,7 @@ import { initSessionNotes } from './ui/sessionNotes.js';
 import { initCheckpoints } from './persistence/checkpoints.js';
 // OPTIONAL — uncomment only if static/js/persistence/autosave.js exists:
 // import { initAutosave } from './persistence/autosave.js';
+ import { initFindBar } from './findReplace/findBar.js';
 
 (() => {
   // ===== DOM Elements =====
@@ -133,6 +134,8 @@ import { initCheckpoints } from './persistence/checkpoints.js';
     onCellChange,
   });
   window.__jupy_notebook = notebook;
+    // ===== Find / Replace Bar =====
+  window.__jupy_findBar = initFindBar(notebook, showToast);
 
   // ===== Terminal =====
   setupTerminal(

@@ -1,0 +1,55 @@
+/* ==========================================================================
+   Jupy Brutalism Design System - Activity Bar (Colab-style left icon rail)
+   ========================================================================== */
+.activity-bar {
+  width: 48px;
+  min-width: 48px;
+  flex-shrink: 0;
+  background: var(--color-surface);
+  border-right: var(--border-thick);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 4px;
+  height: 100%;
+  overflow-y: auto;
+  z-index: 150;
+}
+.activity-btn {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: var(--border-thick);
+  border-radius: var(--rounded-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 1rem;
+  box-shadow: 1px 1px 0px var(--color-shadow);
+  transition: transform 0.1s ease, background 0.1s ease;
+}
+.activity-btn:hover {
+  background: var(--color-secondary);
+  color: #111827;
+  transform: translate(-1px, -1px);
+  box-shadow: 2px 2px 0px var(--color-shadow);
+}
+.activity-btn.active {
+  background: var(--color-primary);
+  color: #FFFFFF;
+  box-shadow: inset 2px 2px 0px rgba(0,0,0,0.25);
+  transform: none;
+}
+.activity-icon { line-height: 1; pointer-events: none; }
+.activity-separator {
+  width: 28px;
+  height: 2px;
+  background: var(--color-border);
+  opacity: 0.25;
+  margin: 4px 0;
+  flex-shrink: 0;
+}
