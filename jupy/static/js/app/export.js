@@ -1,6 +1,8 @@
 /**
  * app/export.js – Export dropdown handlers and utilities
  */
+import { downloadNotebook } from '../notebook/notebookFile.js';
+
 export function getNotebookData(notebook) {
   const cells = notebook.getCells();
   return {
@@ -75,6 +77,13 @@ export function initExportDropdown(notebook, showToast) {
       showToast('⚠️ Export failed: No Markdown returned', 'danger');
     }
   });
+
+  document.getElementById('btn-export-ipynb')?.addEventListener('click', () => {
+    const filename = document.getElementById('filename')?.value;
+    downloadNotebook(notebook.getCells(), filename);
+    showToast('⬇️ .ipynb DOWNLOADED TO YOUR COMPUTER', 'success');
+  });
+
 
   document.getElementById('btn-export-pdf')?.addEventListener('click', async () => {
     const notebookData = getNotebookData(notebook);

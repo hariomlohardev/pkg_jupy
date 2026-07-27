@@ -66,4 +66,24 @@ export function readFileAsText(file) {
     reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
     reader.readAsText(file);
   });
+  
+}
+/**
+ * Saves the notebook ON THE SERVER, in the folder where Jupy was started
+ * (the server's working directory). Uses the existing POST /api/files/save.
+ */
+export async function saveNotebookToServer(cells, filename) {
+  const content = serializeNotebook(cells);
+  const res = await fetch('/api/files/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: filename && filename.trim() ? filename.trim() : 'Untitled.ipynb',
+      content,
+    }),
+  });
+  if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+  const data = await res.json();
+  if (!data || typeof data !== 'object') throw new Error('Invalid server response');
+  return data; // { success: true, path: "Untitled.ipynb" } or { success: false, error }
 }

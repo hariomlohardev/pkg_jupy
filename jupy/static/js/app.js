@@ -9,7 +9,7 @@ import { setupTerminal } from './terminal/terminal.js';
 import { registerAutocomplete } from './autocomplete/autocomplete.js';
 import { initShortcuts } from './shortcuts/shortcuts.js';
 import { createNotebookController } from './notebook/controller.js';
-import { downloadNotebook, parseNotebookFile, readFileAsText } from './notebook/notebookFile.js';
+import { downloadNotebook, saveNotebookToServer, parseNotebookFile, readFileAsText } from './notebook/notebookFile.js';
 import { initRuntimeMenu } from './runtime/runtimeMenu.js';
 import { initEnvTopbarMenu } from './env/envTopbarMenu.js';
 import { setupEnvManager } from './env/envManager.js';
@@ -33,7 +33,7 @@ import { initHyperparams } from './hyperparams.js';
 import { initSessionNotes } from './ui/sessionNotes.js';
 import { initCheckpoints } from './persistence/checkpoints.js';
 // OPTIONAL — uncomment only if static/js/persistence/autosave.js exists:
-// import { initAutosave } from './persistence/autosave.js';
+import { initAutosave } from './persistence/autosave.js';
 import { initFindBar } from './findReplace/findBar.js';
 import { initThemeEngine } from './theme/themeEngine.js';
 import { initThemePanel } from './theme/themePanel.js';
@@ -267,8 +267,32 @@ import { initThemePanel } from './theme/themePanel.js';
     if (runSocket.isOpen) { runSocket.send({ action: 'interrupt' }); showToast('⏹ EXECUTION INTERRUPTED', 'danger'); }
   };
 
-  // ===== Open / Save =====
-  saveBtn?.addEventListener('click', () => downloadNotebook(notebook.getCells(), filenameInput?.value));
+    // ===== Open / Save =====
+  // SAVE writes the .ipynb into the folder where the Jupy server was started.
+  async function saveToServer() {
+    if (!saveBtn) return;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'SAVING…';
+    try {
+      const result = await saveNotebookToServer(notebook.getCells(), filenameInput?.value);
+      if (result.success) {
+        if (filenameInput && result.path) {
+          filenameInput.value = result.path;
+          document.title = `${result.path} — Jupy`;
+        }
+        showToast(`💾 SAVED → ${result.path}`, 'success');
+      } else {
+        showToast(`⚠️ SAVE FAILED: ${result.error || 'UNKNOWN ERROR'}`, 'danger');
+      }
+    } catch (err) {
+      console.error('Save failed:', err);
+      showToast('⚠️ SAVE FAILED — CHECK SERVER', 'danger');
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'SAVE';
+    }
+  }
+  saveBtn?.addEventListener('click', saveToServer);
   openBtn?.addEventListener('click', () => fileInput?.click());
   fileInput?.addEventListener('change', async () => {
     const file = fileInput.files && fileInput.files[0];
@@ -300,7 +324,7 @@ import { initThemePanel } from './theme/themePanel.js';
   ].join('\n'));
 
   // ===== Autosave (OPTIONAL — uncomment after creating persistence/autosave.js) =====
-  // initAutosave(notebook, filenameInput, document.getElementById('last-exec-time'));
+  initAutosave(notebook, filenameInput, document.getElementById('last-exec-time'));
 
   // ===== Menus =====
   initRuntimeMenu({ menu: runtimeMenu, trigger: runtimeMenuTrigger, dropdown: runtimeMenuDropdown, notebook });

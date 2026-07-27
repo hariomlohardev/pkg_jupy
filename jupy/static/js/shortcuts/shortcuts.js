@@ -16,6 +16,12 @@ export function initShortcuts(actions) {
   let lastZeroPress = 0;
 
   document.addEventListener('keydown', (e) => {
+    // Save to server: Ctrl+S / Cmd+S — works everywhere, even while editing a cell
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      document.getElementById('btn-save')?.click();
+      return;
+    }
     // Ignore if inside CodeMirror (handled by editor)
     if (e.target.closest && e.target.closest('.CodeMirror')) {
       // However, some shortcuts like Ctrl+F should still work globally
