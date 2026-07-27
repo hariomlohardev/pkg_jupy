@@ -48,3 +48,47 @@ colors:
     plot_bg: "#FFFFFF"
 
 
+cells:
+  card:
+    background: "#FFFFFF"      # cell card surface
+    border_width: 2px          # 0px = borderless cards
+    radius: 6px                # 16px = pill/rounded look
+    shadow: hard               # hard | soft | none
+    padding: 8px
+    spacing: 8px               # gap BETWEEN cells
+    inner_gap: 8px             # gap between gutter / body / toolbar
+    max_width: 820px           # notebook column width
+  states:
+    selected: "#DAA144"
+    editing: "#DD614C"
+    running_tint: "rgba(221,97,76,0.08)"
+    queued_tint: "rgba(218,161,68,0.08)"
+  gutter:
+    width: 28px
+    run_size: 24px
+    run_radius: 4px            # 50% = circular run button
+    run_bg: "#DAA144"
+    run_fg: "#111827"
+    run_bg_hover: "#DD614C"
+    run_fg_hover: "#FFFFFF"
+    run_bg_running: "#DC2626"
+    run_fg_running: "#FFFFFF"
+  editor:
+    border_width: 2px          # 0px = borderless editor
+    background: "#FFFFFF"
+    radius: 4px
+    font_size: 0.82rem
+    line_height: 1.4
+  output:
+    background: "#FFFFFF"
+    border_width: 2px
+    radius: 4px
+    font_size: 0.8rem
+    line_height: 1.45
+    max_height: 480px
+  toolbar:
+    button_size: 22px
+    idle_opacity: 0            # 1 = always visible
+  markdown:
+    font_size: 1.05rem
+    line_height: 1.65

@@ -1,4 +1,5 @@
 :root {
+  /* ---- core palette ---- */
   --color-primary: #DD614C;
   --color-secondary: #DAA144;
   --color-success: #16A34A;
@@ -10,13 +11,13 @@
   --color-border: #111827;
   --color-shadow: #111827;
 
-  /* NEW: text that sits ON colored surfaces */
+  /* text that sits ON colored surfaces */
   --color-on-primary: #FFFFFF;
   --color-on-secondary: #111827;
   --color-on-danger: #FFFFFF;
   --color-muted: #6B7280;
 
-  /* NEW: terminal + plot + tints */
+  /* terminal + plot + tints */
   --color-terminal-bg: #09090B;
   --color-terminal-fg: #F9FAFB;
   --color-terminal-accent: #34D399;
@@ -25,11 +26,7 @@
   --color-secondary-tint: rgba(218, 161, 68, 0.08);
   --color-hover-tint: rgba(0, 0, 0, 0.03);
 
-  /* NEW: density (driven by theme engine) */
-  --cell-padding: 8px;
-  --cell-gap: 8px;
-  --block-padding: 6px 10px;
-
+  /* ---- shape / motion primitives ---- */
   --rounded-sm: 4px;
   --rounded-md: 6px;
   --border-thick: 2px solid var(--color-border);
@@ -39,7 +36,56 @@
   --font-display: "Darker Grotesque", sans-serif;
   --font-body: "Darker Grotesque", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
+
+  /* ============================================================
+     CELL DESIGN TOKENS — defaults reproduce the current look.
+     A theme's `cells:` block overrides these.
+     ============================================================ */
+  /* card */
+  --cell-bg: var(--color-surface);
+  --cell-border-width: 2px;
+  --cell-radius: var(--rounded-md);
+  --cell-shadow: var(--shadow-brutal);
+  --cell-padding: 8px;
+  --cell-spacing: 8px;
+  --cell-inner-gap: 8px;
+  --notebook-max-width: 820px;
+  /* states */
+  --cell-selected: var(--color-secondary);
+  --cell-editing: var(--color-primary);
+  --cell-running-tint: var(--color-primary-tint);
+  --cell-queued-tint: var(--color-secondary-tint);
+  /* gutter & run button */
+  --gutter-width: 28px;
+  --run-size: 24px;
+  --run-radius: var(--rounded-sm);
+  --run-bg: var(--color-secondary);
+  --run-fg: var(--color-on-secondary);
+  --run-bg-hover: var(--color-primary);
+  --run-fg-hover: var(--color-on-primary);
+  --run-bg-running: var(--color-danger);
+  --run-fg-running: var(--color-on-danger);
+  /* editor */
+  --editor-border-width: 2px;
+  --editor-bg: var(--color-surface);
+  --editor-radius: var(--rounded-sm);
+  --editor-font-size: 0.82rem;
+  --editor-line-height: 1.4;
+  /* output */
+  --output-bg: var(--color-surface);
+  --output-border-width: 2px;
+  --output-radius: var(--rounded-sm);
+  --output-font-size: 0.8rem;
+  --output-line-height: 1.45;
+  --output-max-height: 480px;
+  /* toolbar */
+  --toolbar-btn-size: 22px;
+  --toolbar-idle-opacity: 0;
+  /* markdown */
+  --md-font-size: 1.05rem;
+  --md-line-height: 1.65;
 }
+
 html[data-theme="dark"] {
   --color-surface: #18181B;
   --color-text: #F9FAFB;

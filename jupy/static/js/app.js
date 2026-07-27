@@ -37,6 +37,7 @@ import { initCheckpoints } from './persistence/checkpoints.js';
 import { initFindBar } from './findReplace/findBar.js';
 import { initThemeEngine } from './theme/themeEngine.js';
 import { initThemePanel } from './theme/themePanel.js';
+  // import { initThemeEngine } from './theme/themeEngine.js';
 
 (() => {
   // ===== DOM Elements =====
@@ -96,8 +97,8 @@ import { initThemePanel } from './theme/themePanel.js';
 
   // ===== Theme Engine + Light/Dark =====
   const themeEngine = initThemeEngine();
-  themeEngine.applyActive();          // apply saved custom theme (or default) before first paint
-  initTheme(themeToggleBtn);          // existing light/dark toggle still works within any theme
+  themeEngine.applyActive();
+  initTheme(themeToggleBtn);
   initMetricsStream();
 
   // ===== Run Socket =====
