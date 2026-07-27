@@ -20,7 +20,6 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, output, input,
 
   function ensureSocket() {
     if (termSocket) return;
-    output.textContent = 'Jupy Terminal (.jupy_env) Ready.\n';
     termSocket = new ReconnectingSocket('/ws/terminal', {
       onMessage: (data) => {
         if (data.type === 'output') {
@@ -35,6 +34,10 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, output, input,
     });
   }
 
+  function sendRaw(text) {
+    if (termSocket && termSocket.isOpen) termSocket.send({ type: 'input', data: text });
+  }
+
   function toggleTerminal() {
     panel.hidden = !panel.hidden;
     if (!panel.hidden) {
@@ -43,13 +46,49 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, output, input,
     }
     if (onResize) onResize();
   }
-
   toggleBtn.addEventListener('click', toggleTerminal);
   closeBtn.addEventListener('click', toggleTerminal);
   screen.addEventListener('click', () => input.focus());
 
+  // ---- ^C / ^D helper buttons (next to the input) ----
+  const inputLine = input.parentElement;
+  if (inputLine && !document.getElementById('term-ctrlc')) {
+    const ctrlC = document.createElement('button');
+    ctrlC.id = 'term-ctrlc';
+    ctrlC.className = 'btn btn-secondary';
+    ctrlC.textContent = '^C';
+    ctrlC.title = 'Interrupt (Ctrl+C)';
+    ctrlC.style.cssText = 'padding:2px 8px;font-size:0.7rem;';
+    ctrlC.addEventListener('click', () => { sendRaw('\x03'); appendOutput('^C'); input.focus(); });
+
+    const ctrlD = document.createElement('button');
+    ctrlD.id = 'term-ctrld';
+    ctrlD.className = 'btn btn-secondary';
+    ctrlD.textContent = '^D';
+    ctrlD.title = 'EOF / exit (Ctrl+D)';
+    ctrlD.style.cssText = 'padding:2px 8px;font-size:0.7rem;';
+    ctrlD.addEventListener('click', () => { sendRaw('\x04'); input.focus(); });
+
+    inputLine.appendChild(ctrlC);
+    inputLine.appendChild(ctrlD);
+  }
+
   input.addEventListener('keydown', (e) => {
     if (!termSocket || !termSocket.isOpen) return;
+
+    // Ctrl+C → interrupt the running program (e.g. leave python / stop a loop)
+    if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+      e.preventDefault();
+      sendRaw('\x03');
+      appendOutput('^C');
+      return;
+    }
+    // Ctrl+D → EOF (exit python / shell)
+    if (e.ctrlKey && e.key.toLowerCase() === 'd') {
+      e.preventDefault();
+      sendRaw('\x04');
+      return;
+    }
 
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -58,11 +97,8 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, output, input,
         cmdHistory.push(val);
         historyIdx = cmdHistory.length;
       }
-      const currentPrompt = promptLabel ? promptLabel.textContent : '(jupy_venv) ❯';
-      appendOutput(`${currentPrompt} ${val}\n`);
-      
-      // FIX: Backend expects { type: 'input', data: val }
-      termSocket.send({ type: 'input', data: val + '\n' });
+      // Don't append locally — the PTY echoes the command back to us.
+      sendRaw(val + '\n');
       input.value = '';
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();

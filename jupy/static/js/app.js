@@ -98,6 +98,7 @@ import { initThemePanel } from './theme/themePanel.js';
   // ===== Theme Engine + Light/Dark =====
   const themeEngine = initThemeEngine();
   themeEngine.applyActive();
+  window.__jupy_themeEngine = themeEngine;
   initTheme(themeToggleBtn);
   initMetricsStream();
 
