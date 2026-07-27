@@ -13,13 +13,13 @@ Everything runs locally on your machine.
 ## Badges
 
 <p align="center">
-  <a href="https://pypi.org/project/jupy/">
-    <img src="https://img.shields.io/pypi/v/jupy.svg?label=PyPI" alt="PyPI version" />
+  <a href="https://pypi.org/project/jupy-notebook/">
+    <img src="https://img.shields.io/pypi/v/jupy-notebook.svg?label=PyPI" alt="PyPI version" />
   </a>
-  <a href="https://pypi.org/project/jupy/">
-    <img src="https://img.shields.io/pypi/pyversions/jupy.svg" alt="Python versions" />
+  <a href="https://pypi.org/project/jupy-notebook/">
+    <img src="https://img.shields.io/pypi/pyversions/jupy-notebook.svg" alt="Python versions" />
   </a>
-  <a href="https://github.com/hariomlohardev/pkg_jupy/blob/main/LICENSE">
+  <a href="https://github.com/hariomlohardev/pkg_jupy/LICENSE">
     <img src="https://img.shields.io/github/license/hariomlohardev/pkg_jupy.svg" alt="License" />
   </a>
   <a href="https://github.com/hariomlohardev/pkg_jupy/issues">
@@ -61,19 +61,19 @@ Everything runs locally on your machine.
 Install from PyPI:
 
 ```bash
-python -m pip install jupy
+python -m pip install jupy-notebook
 ```
 
 For full terminal support on Windows, install:
 
 ```bash
-python -m pip install "jupy[terminal]"
+python -m pip install "jupy-notebook[terminal]"
 ```
 
 For all optional features:
 
 ```bash
-python -m pip install "jupy[all]"
+python -m pip install "jupy-notebook[all]"
 ```
 ### Optional extras
 
@@ -87,7 +87,7 @@ python -m pip install "jupy[all]"
 Example:
 
 ```bash
-python -m pip install "jupy[terminal]"
+python -m pip install "jupy-notebook[terminal]"
 ```
 
 ---
@@ -220,7 +220,7 @@ python -m pip install pywinpty
 Or install Jupy with terminal support:
 
 ```bash
-python -m pip install "jupy[terminal]"
+python -m pip install "jupy-notebook[terminal]"
 ```
 
 Without `pywinpty`, Windows falls back to a limited pipe-based terminal.
@@ -324,7 +324,7 @@ GitHub: https://github.com/hariomlohardev/pkg_jupy
 
 Issues: https://github.com/hariomlohardev/pkg_jupy/issues
 
-PyPI: https://pypi.org/project/jupy/
+PyPI: https://pypi.org/project/jupy-notebook/
 
 ---
 
