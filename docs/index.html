@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Jupy — The Brutalist Local Python Notebook</title>
+<meta name="description" content="Jupy: a brutalist, 100% local Python notebook server with a real terminal, community theme store, environments, pip manager, debugger and widgets. One pip install." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23DD614C'/%3E%3Crect x='2' y='2' width='28' height='28' fill='none' stroke='%23111827' stroke-width='3'/%3E%3Ctext x='16' y='24' font-size='20' font-family='monospace' font-weight='bold' text-anchor='middle' fill='%23fff'%3EJ%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Darker+Grotesque:wght@500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   JUPY LANDING — Brutalism Design System
+   ============================================================ */
+:root{
+  --primary:#DD614C; --secondary:#DAA144; --success:#16A34A; --warning:#D97706; --danger:#DC2626;
+  --surface:#FFFFFF; --text:#111827; --well:#F3F4F6; --muted:#6B7280;
+  --term-bg:#09090B; --term-fg:#F9FAFB; --term-accent:#34D399;
+  --font-display:"Darker Grotesque",sans-serif;
+  --font-mono:"JetBrains Mono",monospace;
+  --sh-sm:2px 2px 0 var(--text); --sh:4px 4px 0 var(--text); --sh-lg:7px 7px 0 var(--text);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:var(--font-display); font-size:1.05rem; font-weight:600; line-height:1.45;
+  color:var(--text); background:var(--well);
+  background-image:
+    linear-gradient(rgba(17,24,39,.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(17,24,39,.045) 1px, transparent 1px);
+  background-size:28px 28px;
+}
+::selection{background:var(--secondary);color:var(--text)}
+a{color:inherit}
+img{max-width:100%}
+.wrap{max-width:1240px;margin:0 auto;padding:0 24px}
+.mono{font-family:var(--font-mono)}
+
+/* ---------- buttons / chips ---------- */
+.btn{
+  display:inline-flex;align-items:center;gap:8px;cursor:pointer;text-decoration:none;
+  font-family:var(--font-mono);font-size:.72rem;font-weight:800;letter-spacing:.06em;
+  border:3px solid var(--text);padding:11px 18px;background:var(--surface);color:var(--text);
+  box-shadow:var(--sh);transition:transform .12s ease, box-shadow .12s ease, background .12s ease;
+  user-select:none;
+}
+.btn:hover{transform:translate(-2px,-2px);box-shadow:6px 6px 0 var(--text)}
+.btn:active{transform:translate(2px,2px);box-shadow:0 0 0 var(--text)}
+.btn-ochre{background:var(--secondary)}
+.btn-terra{background:var(--primary);color:#fff}
+.btn-terra:hover{background:#c9503c}
+.btn-dark{background:var(--text);color:var(--well)}
+.btn-dark:hover{background:#000}
+.stamp{
+  display:inline-block;font-family:var(--font-mono);font-size:.62rem;font-weight:800;letter-spacing:.08em;
+  border:2px solid var(--text);background:var(--surface);padding:5px 9px;box-shadow:var(--sh-sm);
+}
+.stamp.terra{background:var(--primary);color:#fff}
+.stamp.ochre{background:var(--secondary)}
+.stamp.dark{background:var(--text);color:var(--well)}
+
+/* ---------- topbar ---------- */
+.topbar{
+  position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:14px;
+  padding:10px 22px;background:var(--surface);border-bottom:3px solid var(--text);
+  box-shadow:0 3px 0 var(--secondary);transition:box-shadow .2s;
+  background-image:repeating-linear-gradient(-45deg, transparent 0 6px, rgba(0,0,0,.022) 6px 7px);
+}
+.topbar.scrolled{box-shadow:0 3px 0 var(--secondary), 0 10px 24px rgba(17,24,39,.14)}
+.brand{font-weight:900;font-size:1.75rem;line-height:1;color:var(--primary);position:relative;text-decoration:none;letter-spacing:.01em}
+.brand::after{content:"";position:absolute;left:0;right:0;bottom:-4px;height:3px;background:var(--secondary)}
+.nav-links{display:flex;gap:4px;margin-left:10px}
+.nav-links a{
+  font-family:var(--font-mono);font-size:.66rem;font-weight:800;letter-spacing:.08em;text-decoration:none;
+  padding:7px 10px;border:2px solid transparent;transition:all .12s;
+}
+.nav-links a:hover{border-color:var(--text);background:var(--well);box-shadow:var(--sh-sm);transform:translate(-1px,-1px)}
+.topbar .spacer{flex:1}
+.led{width:9px;height:9px;border:2px solid var(--text);background:var(--success);display:inline-block;animation:breathe 2.4s ease-in-out infinite}
+@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.35)}}
+.status-mini{display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:.62rem;font-weight:800;letter-spacing:.1em}
+
+/* ---------- opening ---------- */
+.opening{display:grid;grid-template-columns:1.05fr .95fr;gap:52px;align-items:center;padding:76px 0 60px}
+.kicker{
+  display:inline-block;font-family:var(--font-mono);font-size:.68rem;font-weight:800;letter-spacing:.16em;
+  background:var(--text);color:var(--well);padding:6px 12px;margin-bottom:22px;
+}
+.kicker b{color:var(--secondary)}
+h1{
+  font-weight:900;text-transform:uppercase;line-height:.9;letter-spacing:-.01em;
+  font-size:clamp(3.4rem,7.6vw,6.8rem);margin-bottom:22px;
+}
+h1 .outline{color:transparent;-webkit-text-stroke:2.5px var(--text)}
+h1 .hl{display:inline-block;background:var(--secondary);padding:0 .14em;box-shadow:var(--sh);transform:rotate(-1.2deg)}
+h1 .dot{color:var(--primary)}
+.lede{font-size:1.3rem;font-weight:500;max-width:46ch;margin-bottom:26px}
+.lede b{font-weight:800}
+.install-chip{
+  display:flex;align-items:center;gap:14px;background:var(--term-bg);color:var(--term-fg);
+  border:3px solid var(--text);box-shadow:var(--sh);padding:13px 16px;max-width:460px;margin-bottom:22px;
+}
+.install-chip code{font-family:var(--font-mono);font-size:.86rem;font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.install-chip .p{color:var(--term-accent)}
+.copy-btn{
+  cursor:pointer;font-family:var(--font-mono);font-size:.62rem;font-weight:800;letter-spacing:.08em;
+  border:2px solid var(--term-fg);background:transparent;color:var(--term-fg);padding:6px 10px;transition:all .12s;
+}
+.copy-btn:hover{background:var(--secondary);color:var(--text);border-color:var(--secondary)}
+.copy-btn.copied{background:var(--term-accent);color:var(--term-bg);border-color:var(--term-accent)}
+.stamps{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:26px}
+.cta-row{display:flex;gap:14px;flex-wrap:wrap}
+
+/* ---------- mockup ---------- */
+.mockup-wrap{position:relative}
+.stamp-badge{
+  position:absolute;top:-18px;right:-12px;z-index:5;transform:rotate(4deg);
+  background:var(--primary);color:#fff;font-family:var(--font-mono);font-size:.66rem;font-weight:800;letter-spacing:.1em;
+  border:3px solid var(--text);box-shadow:var(--sh);padding:9px 13px;
+}
+.mockup{
+  /* theme-able vars (default = Jupy Brutalism) */
+  --m-primary:#DD614C; --m-secondary:#DAA144; --m-surface:#FFFFFF; --m-text:#111827;
+  --m-well:#F3F4F6; --m-border:#111827; --m-radius:6px;
+  border:3px solid var(--text);background:var(--m-well);box-shadow:12px 12px 0 var(--text);
+  transition:background .3s;
+}
+.mockup[data-theme="nord"]{--m-primary:#5E81AC;--m-secondary:#EBCB8B;--m-surface:#ECEFF4;--m-text:#2E3440;--m-well:#E5E9F0;--m-border:#2E3440}
+.mockup[data-theme="solarized"]{--m-primary:#268bd2;--m-secondary:#b58900;--m-surface:#fdf6e3;--m-text:#586e75;--m-well:#eee8d5;--m-border:#586e75}
+.mockup[data-theme="monokai"]{--m-primary:#F92672;--m-secondary:#E6DB74;--m-surface:#272822;--m-text:#F8F8F2;--m-well:#1e1f1c;--m-border:#F8F8F2}
+.mock-top{
+  display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--m-surface);
+  border-bottom:3px solid var(--m-border);flex-wrap:wrap;
+}
+.mock-brand{font-weight:900;font-size:1.1rem;color:var(--m-primary);line-height:1;border-bottom:3px solid var(--m-secondary);padding-bottom:1px}
+.mock-menu{
+  font-family:var(--font-mono);font-size:.56rem;font-weight:800;letter-spacing:.06em;
+  border:2px solid var(--m-border);background:var(--m-surface);color:var(--m-text);padding:3px 7px;
+}
+.mock-file{
+  font-family:var(--font-mono);font-size:.62rem;font-weight:700;border:2px solid var(--m-border);
+  background:var(--m-well);color:var(--m-text);padding:3px 8px;flex:1;min-width:90px;
+}
+.mock-status{display:flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:.56rem;font-weight:800;color:var(--m-text)}
+.mock-status .led{border-color:var(--m-border)}
+.mock-body{display:grid;grid-template-columns:1.5fr 1fr;min-height:330px}
+.mock-cells{padding:12px;display:flex;flex-direction:column;gap:10px}
+.mock-cell{
+  display:flex;gap:8px;background:var(--m-surface);border:2px solid var(--m-border);
+  border-radius:var(--m-radius);padding:8px;box-shadow:3px 3px 0 var(--m-border);
+}
+.mc-gutter{display:flex;flex-direction:column;align-items:center;gap:5px;width:26px;flex-shrink:0}
+.mc-run{
+  width:22px;height:22px;border:2px solid var(--m-border);background:var(--m-secondary);color:var(--m-text);
+  font-size:.6rem;font-weight:800;cursor:default;display:flex;align-items:center;justify-content:center;
+  border-radius:4px;
+}
+.mc-run.running{background:var(--m-primary);color:#fff}
+.mc-count{font-family:var(--font-mono);font-size:.56rem;font-weight:700;color:var(--m-text);opacity:.75}
+.mc-body{flex:1;min-width:0}
+.mc-code{font-family:var(--font-mono);font-size:.68rem;line-height:1.5;color:var(--m-text);white-space:pre-wrap;word-break:break-word}
+.mc-code .kw{color:var(--m-primary);font-weight:800}
+.mc-md{font-weight:800;font-size:1.15rem;color:var(--m-text);border-bottom:2px solid var(--m-well);padding-bottom:2px}
+.mc-out{
+  margin-top:7px;font-family:var(--font-mono);font-size:.66rem;line-height:1.5;white-space:pre-wrap;
+  border:2px solid var(--m-border);background:var(--m-surface);color:var(--m-text);padding:6px 8px;border-radius:4px;
+}
+.cursor{display:inline-block;width:8px;height:1.05em;background:var(--m-primary);vertical-align:text-bottom;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.mock-term{background:var(--term-bg);border-left:3px solid var(--m-border);display:flex;flex-direction:column}
+.mock-term-head{
+  padding:6px 10px;background:var(--m-primary);color:#fff;font-family:var(--font-mono);
+  font-size:.6rem;font-weight:800;letter-spacing:.08em;border-bottom:3px solid var(--m-border);
+  display:flex;justify-content:space-between;
+}
+.mock-term-body{flex:1;padding:10px;font-family:var(--font-mono);font-size:.64rem;line-height:1.7;color:var(--term-fg);overflow:hidden}
+.t-prompt{color:var(--secondary);font-weight:800}
+.t-cmd{color:var(--term-fg)}
+.t-out{color:#A1A1AA}
+.t-ok{color:var(--term-accent)}
+.t-cursor{display:inline-block;width:7px;height:1em;background:var(--term-fg);vertical-align:text-bottom;animation:blink 1s steps(1) infinite}
+.mock-sys{
+  grid-column:1/-1;display:flex;align-items:center;gap:14px;padding:7px 12px;background:var(--m-surface);
+  border-top:3px solid var(--m-border);font-family:var(--font-mono);font-size:.58rem;font-weight:800;color:var(--m-text);
+}
+.sys-track{width:64px;height:9px;border:2px solid var(--m-border);background:var(--m-well);overflow:hidden}
+.sys-fill{height:100%;background:var(--m-primary);transition:width 1.2s ease-out}
+.sys-fill.ochre{background:var(--m-secondary)}
+.theme-chips{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;align-items:center}
+.chip-label{font-family:var(--font-mono);font-size:.6rem;font-weight:800;letter-spacing:.14em}
+.theme-chip{
+  cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:.62rem;font-weight:800;
+  border:2px solid var(--text);background:var(--surface);padding:7px 11px;box-shadow:3px 3px 0 var(--text);
+  transition:all .12s;
+}
+.theme-chip:hover{transform:translate(-1px,-1px);box-shadow:4px 4px 0 var(--text)}
+.theme-chip.active{background:var(--text);color:var(--well);transform:translate(2px,2px);box-shadow:1px 1px 0 var(--text)}
+.dots{display:flex;gap:3px}
+.dots i{width:10px;height:10px;border:1.5px solid var(--text);display:inline-block}
+
+/* ---------- ticker ---------- */
+.ticker{background:var(--text);border-top:3px solid var(--text);border-bottom:3px solid var(--text);overflow:hidden;padding:12px 0}
+.ticker-track{display:flex;width:max-content;animation:tick 30s linear infinite}
+.ticker:hover .ticker-track{animation-play-state:paused}
+.ticker span{
+  font-family:var(--font-mono);font-size:.72rem;font-weight:800;letter-spacing:.14em;color:var(--well);
+  padding:0 18px;white-space:nowrap;
+}
+.ticker b{color:var(--secondary)}
+@keyframes tick{to{transform:translateX(-50%)}}
+
+/* ---------- sections ---------- */
+section{padding:84px 0}
+.sec-head{margin-bottom:44px}
+.sec-kicker{
+  display:inline-flex;align-items:center;gap:10px;font-family:var(--font-mono);font-size:.66rem;font-weight:800;
+  letter-spacing:.18em;color:var(--primary);margin-bottom:10px;
+}
+.sec-kicker::before{content:"";width:26px;height:4px;background:var(--primary)}
+h2{font-weight:900;text-transform:uppercase;line-height:.95;font-size:clamp(2.4rem,5vw,4rem);letter-spacing:-.01em}
+h2 .soft{color:transparent;-webkit-text-stroke:2px var(--text)}
+.sec-sub{font-size:1.15rem;font-weight:500;max-width:60ch;margin-top:12px}
+
+/* ---------- bento ---------- */
+.bento{display:grid;grid-template-columns:repeat(12,1fr);gap:18px}
+.tile{
+  border:3px solid var(--text);background:var(--surface);box-shadow:6px 6px 0 var(--text);
+  padding:20px;position:relative;transition:transform .15s ease, box-shadow .15s ease;
+  display:flex;flex-direction:column;gap:10px;
+}
+.tile:hover{transform:translate(-3px,-3px);box-shadow:9px 9px 0 var(--text)}
+.tile .tag{font-family:var(--font-mono);font-size:.6rem;font-weight:800;letter-spacing:.16em;color:var(--primary)}
+.tile h3{font-weight:800;font-size:1.55rem;line-height:1;text-transform:uppercase}
+.tile p{font-weight:500;font-size:.98rem;color:#374151}
+.t-term{grid-column:span 7}
+.t-themes{grid-column:span 5;grid-row:span 2}
+.t-env{grid-column:span 4}
+.t-widget{grid-column:span 3}
+.t-pip{grid-column:span 5}
+.t-dbg{grid-column:span 4}
+.t-monitor{grid-column:span 3}
+.mini-term{background:var(--term-bg);color:var(--term-fg);border:2px solid var(--text);padding:10px 12px;font-family:var(--font-mono);font-size:.66rem;line-height:1.8;flex:1}
+.mini-term .t-prompt{color:var(--secondary)}
+.swatch-row{display:flex;align-items:center;gap:10px;border:2px solid var(--text);padding:8px 10px;background:var(--well);transition:transform .12s;font-family:var(--font-mono);font-size:.68rem;font-weight:800}
+.swatch-row:hover{transform:translateX(5px);background:var(--secondary)}
+.swatch-row .dots i{border-color:var(--text)}
+.env-row{display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:2px solid var(--well);font-family:var(--font-mono);font-size:.7rem;font-weight:700}
+.radio{width:14px;height:14px;border:2px solid var(--text);border-radius:50%;position:relative;flex-shrink:0}
+.radio.on::after{content:"";position:absolute;inset:2px;background:var(--primary);border-radius:50%}
+.pkg-row{display:flex;align-items:center;gap:10px;padding:7px 8px;border-bottom:2px solid var(--well);font-family:var(--font-mono);font-size:.7rem}
+.pkg-row b{flex:1}
+.pkg-row .v{color:var(--muted);font-size:.62rem}
+.pkg-x{border:2px solid var(--text);background:var(--surface);width:20px;height:20px;font-size:.6rem;font-weight:800;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .1s}
+.pkg-x:hover{background:var(--danger);color:#fff}
+.dbg-row{font-family:var(--font-mono);font-size:.64rem;padding:6px 8px;border-left:4px solid var(--secondary);background:var(--well);margin-bottom:6px}
+.dbg-row.hot{border-left-color:var(--danger);background:#FEF2F2}
+.dbg-btns{display:flex;gap:6px;margin-top:8px}
+.dbg-btn{font-family:var(--font-mono);font-size:.6rem;font-weight:800;border:2px solid var(--text);background:var(--surface);padding:5px 9px;cursor:pointer;box-shadow:var(--sh-sm);transition:all .1s}
+.dbg-btn:hover{background:var(--secondary);transform:translate(-1px,-1px);box-shadow:3px 3px 0 var(--text)}
+.dbg-btn:active{transform:translate(1px,1px);box-shadow:0 0 0 var(--text)}
+.widget-demo{display:flex;flex-direction:column;gap:8px;flex:1;justify-content:center}
+.widget-demo label{font-family:var(--font-mono);font-size:.62rem;font-weight:800}
+.widget-demo input[type=range]{width:100%;accent-color:var(--primary)}
+.widget-val{font-family:var(--font-mono);font-size:1.3rem;font-weight:800;color:var(--primary)}
+.widget-bar{height:12px;border:2px solid var(--text);background:var(--well)}
+.widget-bar-fill{height:100%;background:var(--secondary);transition:width .1s}
+
+/* ---------- spec sheet ---------- */
+.spec{display:grid;grid-template-columns:1fr 1fr;gap:0 44px;margin-top:44px}
+.spec-row{display:flex;align-items:baseline;gap:14px;border-top:2px solid var(--text);padding:13px 6px;transition:all .12s}
+.spec-row:hover{background:var(--surface);transform:translateX(5px)}
+.spec-num{font-family:var(--font-mono);font-size:.68rem;font-weight:800;color:var(--primary);flex-shrink:0}
+.spec-row b{font-weight:800;font-size:1.02rem}
+.spec-row span{font-weight:500;color:var(--muted);font-size:.92rem;margin-left:auto;text-align:right}
+
+/* ---------- CLI dark section ---------- */
+.dark-sec{background:var(--term-bg);color:var(--term-fg);border-top:4px solid var(--text);border-bottom:4px solid var(--text)}
+.dark-sec .sec-kicker{color:var(--term-accent)}
+.dark-sec .sec-kicker::before{background:var(--term-accent)}
+.dark-sec h2 .soft{-webkit-text-stroke-color:var(--term-fg)}
+.dark-sec .sec-sub{color:#A1A1AA}
+.term-win{max-width:880px;margin:44px auto 0;border:3px solid var(--term-fg);box-shadow:10px 10px 0 var(--primary);background:#0B0B0E}
+.term-win-head{display:flex;align-items:center;gap:10px;background:var(--primary);color:#fff;padding:9px 14px;border-bottom:3px solid var(--term-fg);font-family:var(--font-mono);font-size:.68rem;font-weight:800;letter-spacing:.1em}
+.term-win-head .sq{width:10px;height:10px;border:2px solid #fff;display:inline-block}
+.term-win-body{padding:20px 22px;font-family:var(--font-mono);font-size:.8rem;line-height:2.05}
+.cmd-line{display:flex;gap:12px;align-items:baseline;padding:2px 8px;cursor:copy;transition:background .1s;position:relative}
+.cmd-line:hover{background:#1C1C22}
+.cmd-line .p{color:var(--term-accent);font-weight:800;flex-shrink:0}
+.cmd-line .c{color:#71717A}
+.cmd-line .g{color:#8B8B93;flex-shrink:0;opacity:0;transition:opacity .1s;font-size:.66rem}
+.cmd-line:hover .g{opacity:1}
+.cli-note{max-width:880px;margin:22px auto 0;font-family:var(--font-mono);font-size:.68rem;color:#8B8B93;text-align:center;letter-spacing:.06em}
+.cli-note b{color:var(--secondary)}
+
+/* ---------- theme store ---------- */
+.theme-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:40px}
+.theme-card{border:3px solid var(--text);box-shadow:6px 6px 0 var(--text);cursor:copy;transition:transform .15s, box-shadow .15s;background:var(--tc-bg,#fff);overflow:hidden}
+.theme-card:hover{transform:translate(-3px,-3px) rotate(-.5deg);box-shadow:9px 9px 0 var(--text)}
+.tc-preview{padding:16px 14px 12px;border-bottom:3px solid var(--tc-border)}
+.tc-cell{background:var(--tc-surface);border:2px solid var(--tc-border);border-radius:var(--tc-radius,6px);padding:8px;display:flex;gap:8px;box-shadow:3px 3px 0 var(--tc-border)}
+.tc-run{width:20px;height:20px;flex-shrink:0;background:var(--tc-acc2);border:2px solid var(--tc-border);border-radius:var(--tc-radius,4px);display:flex;align-items:center;justify-content:center;font-size:.55rem;font-weight:800;color:var(--tc-border)}
+.tc-code{font-family:var(--font-mono);font-size:.6rem;line-height:1.6;color:var(--tc-text)}
+.tc-code b{color:var(--tc-acc1)}
+.tc-meta{padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.tc-name{font-weight:800;font-size:1.15rem;text-transform:uppercase;color:var(--tc-text);line-height:1}
+.tc-cmd{font-family:var(--font-mono);font-size:.6rem;color:var(--tc-text);opacity:.65}
+.tc-dots{display:flex;gap:4px}
+.tc-dots i{width:14px;height:14px;border:2px solid var(--tc-border)}
+.publish{
+  margin-top:34px;border:3px solid var(--text);background:var(--surface);box-shadow:8px 8px 0 var(--text);
+  padding:26px 28px;display:grid;grid-template-columns:auto 1fr;gap:26px;align-items:center;
+}
+.publish-badge{background:var(--secondary);border:3px solid var(--text);font-family:var(--font-mono);font-weight:800;font-size:.7rem;letter-spacing:.1em;padding:14px 16px;transform:rotate(-3deg);box-shadow:var(--sh);text-align:center;line-height:1.6}
+.publish h3{font-weight:800;font-size:1.6rem;text-transform:uppercase;margin-bottom:8px}
+.publish code{font-family:var(--font-mono);font-size:.78rem;background:var(--well);border:2px solid var(--text);padding:2px 7px;font-weight:700}
+.publish p{font-weight:500}
+
+/* ---------- shortcuts ---------- */
+.sc-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:40px}
+.sc-panel{border:3px solid var(--text);background:var(--surface);box-shadow:6px 6px 0 var(--text)}
+.sc-panel-head{background:var(--primary);color:#fff;padding:9px 14px;font-family:var(--font-mono);font-size:.68rem;font-weight:800;letter-spacing:.12em;border-bottom:3px solid var(--text)}
+.sc-panel.alt .sc-panel-head{background:var(--secondary);color:var(--text)}
+.sc-body{padding:10px 14px}
+.sc-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 4px;border-bottom:2px solid var(--well);transition:background .1s}
+.sc-row:last-child{border-bottom:none}
+.sc-row:hover{background:var(--well)}
+.sc-keys{display:flex;gap:4px;flex-wrap:wrap}
+kbd{
+  font-family:var(--font-mono);font-size:.64rem;font-weight:800;border:2px solid var(--text);background:var(--surface);
+  padding:3px 8px;box-shadow:var(--sh-sm);border-radius:4px;white-space:nowrap;
+}
+.sc-row span{font-weight:600;font-size:.95rem;text-align:right}
+
+/* ---------- install steps ---------- */
+.steps{margin-top:44px}
+.step{display:grid;grid-template-columns:150px 1fr;gap:28px;border-top:3px solid var(--text);padding:30px 6px;align-items:center;transition:background .15s}
+.step:last-child{border-bottom:3px solid var(--text)}
+.step:hover{background:var(--surface)}
+.step-num{font-weight:900;font-size:5.4rem;line-height:1;color:transparent;-webkit-text-stroke:2.5px var(--primary)}
+.step h3{font-weight:800;font-size:1.7rem;text-transform:uppercase;line-height:1;margin-bottom:8px}
+.step p{font-weight:500;color:#374151;margin-bottom:12px;max-width:64ch}
+.step .install-chip{margin:0;max-width:520px}
+.step .mini{font-family:var(--font-mono);font-size:.66rem;color:var(--muted);margin-top:10px;letter-spacing:.04em}
+.step .mini b{color:var(--primary)}
+
+/* ---------- footer ---------- */
+footer{background:var(--text);color:var(--well);padding:70px 0 34px;border-top:4px solid var(--secondary)}
+.foot-word{font-weight:900;font-size:clamp(4.5rem,13vw,9.5rem);line-height:.85;color:transparent;-webkit-text-stroke:2px var(--well);text-transform:uppercase;letter-spacing:.02em;margin-bottom:8px}
+.foot-word em{font-style:normal;color:var(--primary);-webkit-text-stroke:0}
+.foot-tag{font-family:var(--font-mono);font-size:.68rem;font-weight:800;letter-spacing:.2em;color:var(--secondary);margin-bottom:44px}
+.foot-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:34px;padding-bottom:44px;border-bottom:2px solid #374151}
+.foot-grid h4{font-family:var(--font-mono);font-size:.64rem;font-weight:800;letter-spacing:.18em;color:var(--secondary);margin-bottom:14px}
+.foot-grid a{display:block;text-decoration:none;font-weight:600;padding:4px 0;transition:all .1s}
+.foot-grid a:hover{color:var(--secondary);transform:translateX(5px)}
+.foot-about{font-weight:500;color:#9CA3AF;max-width:38ch}
+.foot-bottom{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;padding-top:24px;font-family:var(--font-mono);font-size:.64rem;font-weight:700;letter-spacing:.08em;color:#9CA3AF}
+.foot-bottom b{color:var(--primary)}
+
+/* ---------- toast ---------- */
+#toast{
+  position:fixed;left:18px;bottom:18px;z-index:999;background:var(--secondary);color:var(--text);
+  border:3px solid var(--text);box-shadow:var(--sh);font-family:var(--font-mono);font-size:.7rem;font-weight:800;
+  letter-spacing:.06em;padding:12px 16px;max-width:74vw;
+  transform:translateY(90px);opacity:0;transition:transform .25s cubic-bezier(.2,.9,.3,1.3), opacity .25s;
+  pointer-events:none;
+}
+#toast.show{transform:none;opacity:1}
+
+/* ---------- reveals ---------- */
+.reveal{opacity:0;transform:translateY(26px);transition:opacity .6s cubic-bezier(.2,.7,.2,1), transform .6s cubic-bezier(.2,.7,.2,1);transition-delay:var(--d,0s)}
+.reveal.in{opacity:1;transform:none}
+
+/* ---------- responsive ---------- */
+@media (max-width:1020px){
+  .opening{grid-template-columns:1fr;padding-top:52px}
+  .t-term,.t-themes,.t-env,.t-widget,.t-pip,.t-dbg,.t-monitor{grid-column:span 12;grid-row:auto}
+  .theme-grid{grid-template-columns:1fr 1fr}
+  .spec{grid-template-columns:1fr}
+  .sc-grid{grid-template-columns:1fr}
+  .foot-grid{grid-template-columns:1fr 1fr}
+  .publish{grid-template-columns:1fr}
+  .nav-links{display:none}
+  .step{grid-template-columns:1fr;gap:8px}
+  .step-num{font-size:3.4rem}
+}
+@media (max-width:620px){
+  .theme-grid{grid-template-columns:1fr}
+  .mock-body{grid-template-columns:1fr}
+  .mock-term{border-left:none;border-top:3px solid var(--m-border);min-height:170px}
+  .status-mini{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;transition-duration:.01ms !important}
+  .ticker-track{animation:none}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+
+<!-- ================= TOPBAR ================= -->
+<header class="topbar" id="topbar">
+  <a class="brand" href="#top">JUPY</a>
+  <nav class="nav-links">
+    <a href="#features">FEATURES</a>
+    <a href="#cli">CLI</a>
+    <a href="#themes">THEMES</a>
+    <a href="#shortcuts">SHORTCUTS</a>
+    <a href="#install">INSTALL</a>
+  </nav>
+  <div class="spacer"></div>
+  <span class="status-mini"><span class="led"></span> SERVER: LOCAL</span>
+  <a class="btn btn-ochre" href="https://pypi.org/project/jupy-notebook/" target="_blank" rel="noopener">PYPI ↗</a>
+  <a class="btn btn-dark" href="https://github.com/hariomlohardev/pkg_jupy" target="_blank" rel="noopener">★ GITHUB</a>
+</header>
+
+<main id="top">
+
+  <!-- ================= OPENING ================= -->
+  <div class="wrap">
+    <div class="opening">
+      <div class="reveal in">
+        <span class="kicker">PIP INSTALL <b>JUPY-NOTEBOOK</b> — NOW ON PYPI</span>
+        <h1>THE <span class="outline">BRUTALIST</span><br /><span class="hl">PYTHON</span> NOTEBOOK<span class="dot">.</span></h1>
+        <p class="lede">Cells, a <b>real PTY terminal</b>, a community <b>theme store</b>, isolated <b>environments</b>, a <b>debugger</b>, widgets and 35+ magics — in one <b>pip install</b>. Your code never leaves your machine.</p>
+        <div class="install-chip">
+          <code><span class="p">$</span> pip install jupy-notebook</code>
+          <button class="copy-btn" data-copy="pip install jupy-notebook">COPY</button>
+        </div>
+        <div class="stamps">
+          <span class="stamp terra">ON PYPI ✓</span>
+          <span class="stamp ochre">MIT LICENSE</span>
+          <span class="stamp">PYTHON 3.9+</span>
+          <span class="stamp dark">100% LOCAL</span>
+          <span class="stamp">0 CLOUD</span>
+        </div>
+        <div class="cta-row">
+          <a class="btn btn-terra" href="https://github.com/hariomlohardev/pkg_jupy" target="_blank" rel="noopener">★ STAR ON GITHUB</a>
+          <a class="btn" href="https://github.com/hariomlohardev/themes_jupy" target="_blank" rel="noopener">🎨 THEME STORE</a>
+        </div>
+      </div>
+
+      <!-- live mockup -->
+      <div class="mockup-wrap reveal in" style="--d:.15s">
+        <div class="stamp-badge">100%<br />LOCAL</div>
+        <div class="mockup" id="mockup">
+          <div class="mock-top">
+            <span class="mock-brand">JUPY</span>
+            <span class="mock-menu">RUNTIME ▾</span>
+            <span class="mock-menu">ENVIRONMENT ▾</span>
+            <span class="mock-file">demo.ipynb</span>
+            <span class="mock-status"><span class="led"></span> IDLE</span>
+          </div>
+          <div class="mock-body">
+            <div class="mock-cells">
+              <div class="mock-cell">
+                <div class="mc-gutter"></div>
+                <div class="mc-body"><div class="mc-md"># JUPY — LOCAL NOTEBOOK</div></div>
+              </div>
+              <div class="mock-cell">
+                <div class="mc-gutter"><span class="mc-run">▶</span><span class="mc-count">[1] · 0.02s</span></div>
+                <div class="mc-body">
+                  <pre class="mc-code"><span class="kw">import</span> time
+<span class="kw">print</span>(<span style="color:var(--m-primary)">"Welcome to Jupy!"</span>)</pre>
+                  <div class="mc-out">Welcome to Jupy!</div>
+                </div>
+              </div>
+              <div class="mock-cell">
+                <div class="mc-gutter"><span class="mc-run" id="anim-run">▶</span><span class="mc-count" id="anim-count">[ ]</span></div>
+                <div class="mc-body">
+                  <pre class="mc-code"><span id="type-target"></span><span class="cursor"></span></pre>
+                  <div class="mc-out" id="anim-output" hidden></div>
+                </div>
+              </div>
+            </div>
+            <div class="mock-term">
+              <div class="mock-term-head"><span>📟 TERMINAL</span><span>✕</span></div>
+              <div class="mock-term-body" id="term-body"></div>
+            </div>
+            <div class="mock-sys">
+              <span style="color:var(--m-primary)">CPU</span>
+              <span class="sys-track"><span class="sys-fill" id="cpu-fill" style="width:34%"></span></span>
+              <span id="cpu-val">34%</span>
+              <span style="color:var(--m-primary)">RAM</span>
+              <span class="sys-track"><span class="sys-fill ochre" id="ram-fill" style="width:52%"></span></span>
+              <span id="ram-val">8.3/16 GB</span>
+            </div>
+          </div>
+        </div>
+        <div class="theme-chips">
+          <span class="chip-label">LIVE THEME →</span>
+          <button class="theme-chip active" data-theme="" data-slug="default"><span class="dots"><i style="background:#DD614C"></i><i style="background:#DAA144"></i><i style="background:#fff"></i><i style="background:#111827"></i></span>BRUTALISM</button>
+          <button class="theme-chip" data-theme="nord" data-slug="nord-frost"><span class="dots"><i style="background:#5E81AC"></i><i style="background:#EBCB8B"></i><i style="background:#ECEFF4"></i><i style="background:#2E3440"></i></span>NORD FROST</button>
+          <button class="theme-chip" data-theme="solarized" data-slug="solarized"><span class="dots"><i style="background:#268bd2"></i><i style="background:#b58900"></i><i style="background:#fdf6e3"></i><i style="background:#586e75"></i></span>SOLARIZED</button>
+          <button class="theme-chip" data-theme="monokai" data-slug="monokai"><span class="dots"><i style="background:#F92672"></i><i style="background:#E6DB74"></i><i style="background:#272822"></i><i style="background:#F8F8F2"></i></span>MONOKAI</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= TICKER ================= -->
+  <div class="ticker" aria-hidden="true">
+    <div class="ticker-track" id="ticker-track">
+      <span>REAL PTY TERMINAL <b>■</b></span><span>COMMUNITY THEME STORE <b>■</b></span><span>ISOLATED ENVIRONMENTS <b>■</b></span><span>PIP MANAGER <b>■</b></span><span>BREAKPOINT DEBUGGER <b>■</b></span><span>IPYWIDGETS-STYLE WIDGETS <b>■</b></span><span>35+ MAGICS <b>■</b></span><span>JEDI AUTOCOMPLETE <b>■</b></span><span>EXPORT HTML / PY / MD / PDF <b>■</b></span><span>GIT INTEGRATION <b>■</b></span><span>CHECKPOINTS <b>■</b></span><span>CPU · RAM · GPU MONITOR <b>■</b></span><span>COMMAND PALETTE <b>■</b></span><span>100% LOCAL <b>■</b></span>
+    </div>
+  </div>
+
+  <!-- ================= FEATURES ================= -->
+  <section id="features">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="sec-kicker">01 / FEATURES</span>
+        <h2>EVERYTHING IN <span class="soft">THE BOX.</span></h2>
+        <p class="sec-sub">No plugins to hunt down, no extensions to babysit. One binary-style install, the whole workshop included.</p>
+      </div>
+
+      <div class="bento">
+        <div class="tile t-term reveal">
+          <span class="tag">/ws/terminal</span>
+          <h3>📟 A Real Terminal</h3>
+          <p>Not a fake command box — a genuine PTY (ConPTY on Windows via pywinpty). Tab completion, arrow history, colors, vim, <code class="mono" style="font-size:.85em">python</code> REPL, all of it.</p>
+          <div class="mini-term">
+            <div><span class="t-prompt">(default) D:\project&gt;</span> <span class="t-cmd">jupy theme add nord-frost</span></div>
+            <div><span class="t-ok">✓ Installed "Nord Frost" (nord-frost) v1.0.0</span></div>
+            <div><span class="t-prompt">(default) D:\project&gt;</span> <span class="t-cmd">python</span></div>
+            <div><span class="t-out">&gt;&gt;&gt; </span><span class="t-cursor"></span></div>
+          </div>
+        </div>
+
+        <div class="tile t-themes reveal" style="--d:.08s">
+          <span class="tag">themes_jupy</span>
+          <h3>🎨 Theme Store</h3>
+          <p>Browse &amp; install community themes from the <b>themes_jupy</b> registry — CLI or the in-app panel. YAML tokens, live preview, one command.</p>
+          <div class="swatch-row"><span class="dots"><i style="background:#5E81AC"></i><i style="background:#EBCB8B"></i><i style="background:#ECEFF4"></i></span>nord-frost</div>
+          <div class="swatch-row"><span class="dots"><i style="background:#268bd2"></i><i style="background:#b58900"></i><i style="background:#fdf6e3"></i></span>solarized</div>
+          <div class="swatch-row"><span class="dots"><i style="background:#F92672"></i><i style="background:#E6DB74"></i><i style="background:#272822"></i></span>monokai</div>
+          <div class="swatch-row"><span class="dots"><i style="background:#DD614C"></i><i style="background:#DAA144"></i><i style="background:#fff"></i></span>soft-round</div>
+          <p class="mono" style="font-size:.66rem;font-weight:800;color:var(--primary);margin-top:auto">$ jupy theme add &lt;name&gt;</p>
+        </div>
+
+        <div class="tile t-env reveal">
+          <span class="tag">envmanager</span>
+          <h3>📦 Environments</h3>
+          <div class="env-row"><span class="radio on"></span> Global default <span class="mono" style="margin-left:auto;font-size:.6rem;color:var(--muted)">envs/default</span></div>
+          <div class="env-row"><span class="radio"></span> Named global <span class="mono" style="margin-left:auto;font-size:.6rem;color:var(--muted)">envs/datasci</span></div>
+          <div class="env-row"><span class="radio"></span> This folder only <span class="mono" style="margin-left:auto;font-size:.6rem;color:var(--muted)">.jupy_env/</span></div>
+        </div>
+
+        <div class="tile t-widget reveal" style="--d:.08s">
+          <span class="tag">interact()</span>
+          <h3>🎛 Widgets</h3>
+          <div class="widget-demo">
+            <label>N_SAMPLES</label>
+            <input type="range" id="w-slider" min="0" max="100" value="42" />
+            <div class="widget-bar"><div class="widget-bar-fill" id="w-fill" style="width:42%"></div></div>
+            <div class="widget-val" id="w-val">42</div>
+          </div>
+        </div>
+
+        <div class="tile t-pip reveal">
+          <span class="tag">pip manager</span>
+          <h3>🐍 Pip, Built In</h3>
+          <div class="pkg-row"><b>numpy</b><span class="v">1.26.4</span><span class="pkg-x">✕</span></div>
+          <div class="pkg-row"><b>pandas</b><span class="v">2.2.1</span><span class="pkg-x">✕</span></div>
+          <div class="pkg-row"><b>matplotlib</b><span class="v">3.8.3</span><span class="pkg-x">✕</span></div>
+        </div>
+
+        <div class="tile t-dbg reveal" style="--d:.08s">
+          <span class="tag">pdb-powered</span>
+          <h3>🐞 Debugger</h3>
+          <div class="dbg-row hot">#0 &lt;module&gt; — &lt;cell&gt;:4</div>
+          <div class="dbg-row">#1 train() — model.py:21</div>
+          <div class="dbg-row">#2 &lt;module&gt; — &lt;cell&gt;:1</div>
+          <div class="dbg-btns">
+            <button class="dbg-btn">▶ CONTINUE</button>
+            <button class="dbg-btn">⤵ STEP OVER</button>
+            <button class="dbg-btn">⤴ STEP OUT</button>
+          </div>
+        </div>
+
+        <div class="tile t-monitor reveal" style="--d:.16s">
+          <span class="tag">live · 5s avg</span>
+          <h3>📈 Monitor</h3>
+          <p>CPU · RAM · GPU footer, streamed over WebSocket.</p>
+          <div style="margin-top:auto">
+            <div class="sys-track" style="width:100%;height:14px"><div class="sys-fill" id="tile-cpu" style="width:41%"></div></div>
+            <div class="mono" style="font-size:.6rem;font-weight:800;margin-top:6px" id="tile-cpu-val">CPU 41%</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- spec sheet -->
+      <div class="spec reveal">
+        <div class="spec-row"><span class="spec-num">01</span><b>Markdown cells</b><span>Colab-style seamless docs</span></div>
+        <div class="spec-row"><span class="spec-num">02</span><b>Jedi autocomplete</b><span>+ hover docstrings</span></div>
+        <div class="spec-row"><span class="spec-num">03</span><b>Plots</b><span>matplotlib · plotly · bokeh · altair</span></div>
+        <div class="spec-row"><span class="spec-num">04</span><b>MathJax</b><span>inline $LaTeX$ rendering</span></div>
+        <div class="spec-row"><span class="spec-num">05</span><b>35+ magics</b><span>%time · %run · %pip · %debug …</span></div>
+        <div class="spec-row"><span class="spec-num">06</span><b>Exports</b><span>HTML · .py · Markdown · PDF</span></div>
+        <div class="spec-row"><span class="spec-num">07</span><b>Headless run</b><span>jupy run nb.ipynb -o out.ipynb</span></div>
+        <div class="spec-row"><span class="spec-num">08</span><b>Checkpoints</b><span>snapshot &amp; restore</span></div>
+        <div class="spec-row"><span class="spec-num">09</span><b>Git integration</b><span>branch + one-click commit</span></div>
+        <div class="spec-row"><span class="spec-num">10</span><b>Command palette</b><span>Ctrl+Shift+P</span></div>
+        <div class="spec-row"><span class="spec-num">11</span><b>Presentation mode</b><span>fullscreen slides</span></div>
+        <div class="spec-row"><span class="spec-num">12</span><b>Zen mode</b><span>chrome disappears</span></div>
+        <div class="spec-row"><span class="spec-num">13</span><b>Find &amp; replace</b><span>across all cells</span></div>
+        <div class="spec-row"><span class="spec-num">14</span><b>Cell folding</b><span>+ collapsible headings</span></div>
+        <div class="spec-row"><span class="spec-num">15</span><b>Drag &amp; drop</b><span>reorder cells</span></div>
+        <div class="spec-row"><span class="spec-num">16</span><b>stdin input()</b><span>real prompts in cells</span></div>
+        <div class="spec-row"><span class="spec-num">17</span><b>Variable explorer</b><span>+ DataFrame previews</span></div>
+        <div class="spec-row"><span class="spec-num">18</span><b>Autosave</b><span>debounced to disk</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CLI ================= -->
+  <section class="dark-sec" id="cli">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="sec-kicker">02 / COMMAND LINE</span>
+        <h2 style="color:var(--term-fg)">ONE COMMAND. <span class="soft">WHOLE WORKSHOP.</span></h2>
+        <p class="sec-sub">The <span class="mono" style="color:var(--term-accent)">jupy</span> CLI drives everything — server, themes, environments, packages, notebooks. Click any line to copy it.</p>
+      </div>
+      <div class="term-win reveal">
+        <div class="term-win-head"><span class="sq"></span><span class="sq" style="background:#fff"></span><span class="sq"></span>&nbsp; jupy — powershell</div>
+        <div class="term-win-body">
+          <div class="cmd-line" data-copy="pip install jupy-notebook"><span class="p">PS&gt;</span> pip install jupy-notebook <span class="c"># the whole notebook server</span><span class="g">⧉ copy</span></div>
+          <div class="cmd-line" data-copy="jupy"><span class="p">PS&gt;</span> jupy <span class="c"># serve on :8000, opens your browser</span><span class="g">⧉ copy</span></div>
+          <div class="cmd-line" data-copy="jupy theme add nord-frost --use"><span class="p">PS&gt;</span> jupy theme add nord-frost --use <span class="c"># community themes</span><span class="g">⧉ copy</span></div>
+          <div class="cmd-line" data-copy="jupy env create datasci"><span class="p">PS&gt;</span> jupy env create datasci <span class="c"># isolated environment</span><span class="g">⧉ copy</span></div>
+          <div class="cmd-line" data-copy="jupy pip install numpy pandas"><span class="p">PS&gt;</span> jupy pip install numpy pandas <span class="c"># into the active env</span><span class="g">⧉ copy</span></div>
+          <div class="cmd-line" data-copy="jupy run report.ipynb -o executed.ipynb"><span class="p">PS&gt;</span> jupy run report.ipynb -o executed.ipynb <span class="c"># headless execution</span><span class="g">⧉ copy</span></div>
+          <div class="cmd-line" data-copy="jupy export report.ipynb --format html"><span class="p">PS&gt;</span> jupy export report.ipynb --format html <span class="c"># or py / md / pdf</span><span class="g">⧉ copy</span></div>
+          <div class="cmd-line" data-copy="jupy doctor --full"><span class="p">PS&gt;</span> jupy doctor --full <span class="c"># health check</span><span class="g">⧉ copy</span></div>
+        </div>
+      </div>
+      <p class="cli-note reveal">WINDOWS TERMINAL USERS → <b>pip install "jupy-notebook[terminal]"</b> FOR FULL CONPTY SUPPORT</p>
+    </div>
+  </section>
+
+  <!-- ================= THEMES ================= -->
+  <section id="themes">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="sec-kicker">03 / THEME STORE</span>
+        <h2>PAINT YOUR <span class="soft">NOTEBOOK.</span></h2>
+        <p class="sec-sub">Themes are plain YAML token files, validated and served from the <a href="https://github.com/hariomlohardev/themes_jupy" target="_blank" rel="noopener"><b>themes_jupy</b></a> registry. Click a card to copy its install command.</p>
+      </div>
+
+      <div class="theme-grid">
+        <div class="theme-card reveal" data-copy="jupy theme add nord-frost" style="--tc-bg:#E5E9F0;--tc-surface:#ECEFF4;--tc-text:#2E3440;--tc-border:#2E3440;--tc-acc1:#5E81AC;--tc-acc2:#EBCB8B">
+          <div class="tc-preview"><div class="tc-cell"><span class="tc-run">▶</span><pre class="tc-code"><b>import</b> numpy <b>as</b> np
+x = np.arange(<span style="color:#5E81AC">10</span>)</pre></div></div>
+          <div class="tc-meta">
+            <span class="tc-name">❄ Nord Frost</span>
+            <span class="tc-dots"><i style="background:#5E81AC"></i><i style="background:#EBCB8B"></i><i style="background:#A3BE8C"></i><i style="background:#ECEFF4"></i></span>
+            <span class="tc-cmd">$ jupy theme add nord-frost</span>
+          </div>
+        </div>
+        <div class="theme-card reveal" style="--d:.07s" data-copy="jupy theme add solarized" style="--tc-bg:#eee8d5;--tc-surface:#fdf6e3;--tc-text:#586e75;--tc-border:#586e75;--tc-acc1:#268bd2;--tc-acc2:#b58900">
+          <div class="tc-preview" style="background:#eee8d5"><div class="tc-cell" style="background:#fdf6e3;border-color:#586e75"><span class="tc-run" style="background:#b58900;border-color:#586e75;color:#fdf6e3">▶</span><pre class="tc-code" style="color:#586e75"><b style="color:#268bd2">def</b> train(x):
+  <b style="color:#268bd2">return</b> x * <span style="color:#b58900">2</span></pre></div></div>
+          <div class="tc-meta" style="background:#fdf6e3">
+            <span class="tc-name" style="color:#586e75">☀ Solarized</span>
+            <span class="tc-dots"><i style="background:#268bd2;border-color:#586e75"></i><i style="background:#b58900;border-color:#586e75"></i><i style="background:#859900;border-color:#586e75"></i><i style="background:#fdf6e3;border-color:#586e75"></i></span>
+            <span class="tc-cmd" style="color:#586e75">$ jupy theme add solarized</span>
+          </div>
+        </div>
+        <div class="theme-card reveal" style="--d:.14s" data-copy="jupy theme add monokai">
+          <div class="tc-preview" style="background:#1e1f1c"><div class="tc-cell" style="background:#272822;border-color:#F8F8F2;box-shadow:3px 3px 0 #F8F8F2"><span class="tc-run" style="background:#E6DB74;border-color:#F8F8F2;color:#272822">▶</span><pre class="tc-code" style="color:#F8F8F2"><b style="color:#F92672">for</b> i <b style="color:#F92672">in</b> range(<span style="color:#AE81FF">3</span>):
+  print(<span style="color:#E6DB74">"brick"</span>)</pre></div></div>
+          <div class="tc-meta" style="background:#272822">
+            <span class="tc-name" style="color:#F8F8F2">🌑 Monokai</span>
+            <span class="tc-dots"><i style="background:#F92672;border-color:#F8F8F2"></i><i style="background:#E6DB74;border-color:#F8F8F2"></i><i style="background:#A6E22E;border-color:#F8F8F2"></i><i style="background:#272822;border-color:#F8F8F2"></i></span>
+            <span class="tc-cmd" style="color:#F8F8F2">$ jupy theme add monokai</span>
+          </div>
+        </div>
+        <div class="theme-card reveal" style="--d:.21s" data-copy="jupy theme add soft-round" style="--tc-radius:14px">
+          <div class="tc-preview" style="background:#F3F4F6"><div class="tc-cell" style="background:#fff;border-color:#E5E7EB;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.18)"><span class="tc-run" style="background:#DAA144;border-color:#E5E7EB;border-radius:50%">▶</span><pre class="tc-code" style="color:#111827"><b style="color:#DD614C">class</b> Model:
+  lr = <span style="color:#D97706">0.001</span></pre></div></div>
+          <div class="tc-meta" style="background:#fff">
+            <span class="tc-name" style="color:#111827">🫧 Soft Round</span>
+            <span class="tc-dots"><i style="background:#DD614C;border-color:#111827;border-radius:50%"></i><i style="background:#DAA144;border-color:#111827;border-radius:50%"></i><i style="background:#16A34A;border-color:#111827;border-radius:50%"></i><i style="background:#fff;border-color:#111827;border-radius:50%"></i></span>
+            <span class="tc-cmd" style="color:#111827">$ jupy theme add soft-round</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="publish reveal">
+        <div class="publish-badge">CALL FOR<br />THEMES 📣</div>
+        <div>
+          <h3>Ship your own theme</h3>
+          <p>Scaffold locally with <code>jupy theme new my-theme</code>, tune <code>theme.yml</code> + <code>about.json</code>, drop in a <code>preview.png</code>, and open a PR to <b>themes_jupy</b>. GitHub Actions validates and publishes it to the registry automatically — then anyone can <code>jupy theme add my-theme</code>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= SHORTCUTS ================= -->
+  <section id="shortcuts" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="sec-kicker">04 / SHORTCUTS</span>
+        <h2>HANDS ON <span class="soft">THE KEYS.</span></h2>
+        <p class="sec-sub">Jupyter-style muscle memory, kept. Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>?</kbd> in-app for this exact dialog.</p>
+      </div>
+      <div class="sc-grid">
+        <div class="sc-panel reveal">
+          <div class="sc-panel-head">COMMAND MODE — PRESS ESC FIRST</div>
+          <div class="sc-body">
+            <div class="sc-row"><span class="sc-keys"><kbd>Shift</kbd><kbd>Enter</kbd></span><span>Run cell &amp; select next</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>Enter</kbd></span><span>Run cell in place</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Alt</kbd><kbd>Enter</kbd></span><span>Run &amp; insert below</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>A</kbd></span><span>Insert cell above</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>B</kbd></span><span>Insert cell below</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>D</kbd><kbd>D</kbd></span><span>Delete cell</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Z</kbd></span><span>Undo delete</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>K</kbd>/<kbd>J</kbd></span><span>Navigate cells</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>↑↓</kbd></span><span>Move cell</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>I</kbd><kbd>I</kbd></span><span>Interrupt kernel</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>0</kbd><kbd>0</kbd></span><span>Restart kernel</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>M</kbd></span><span>Merge selected cells</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>P</kbd></span><span>Command palette</span></div>
+          </div>
+        </div>
+        <div class="sc-panel alt reveal" style="--d:.1s">
+          <div class="sc-panel-head">EDIT MODE — PRESS ENTER</div>
+          <div class="sc-body">
+            <div class="sc-row"><span class="sc-keys"><kbd>Esc</kbd></span><span>Back to command mode</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>Space</kbd></span><span>Trigger autocomplete</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>/</kbd></span><span>Toggle line comment</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Alt</kbd><kbd>↑↓</kbd></span><span>Move line up/down</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>F</kbd></span><span>Find &amp; replace</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>S</kbd></span><span>Save notebook to server</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>Z</kbd></span><span>Undo cell operation</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>Y</kbd></span><span>Redo cell operation</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>X/C/V</kbd></span><span>Cut / copy / paste cells</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>L</kbd></span><span>Toggle line numbers</span></div>
+            <div class="sc-row"><span class="sc-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>?</kbd></span><span>This help dialog</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= INSTALL ================= -->
+  <section id="install" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="sec-kicker">05 / GET STARTED</span>
+        <h2>THREE STEPS. <span class="soft">ZERO CLOUD.</span></h2>
+      </div>
+      <div class="steps">
+        <div class="step reveal">
+          <div class="step-num">01</div>
+          <div>
+            <h3>Install</h3>
+            <p>One package. Python 3.9+, any OS. Windows users: add the <b>terminal</b> extra for full ConPTY support.</p>
+            <div class="install-chip"><code><span class="p">$</span> pip install "jupy-notebook[all]"</code><button class="copy-btn" data-copy='pip install "jupy-notebook[all]"'>COPY</button></div>
+            <p class="mini">OR MINIMAL → <b>pip install jupy-notebook</b></p>
+          </div>
+        </div>
+        <div class="step reveal">
+          <div class="step-num">02</div>
+          <div>
+            <h3>Launch</h3>
+            <p>Run it in any project folder. The server starts on port 8000 and opens your browser — everything is served from <b>that folder</b>, and SAVE writes notebooks right back into it.</p>
+            <div class="install-chip"><code><span class="p">$</span> cd my_project &amp;&amp; jupy</code><button class="copy-btn" data-copy="jupy">COPY</button></div>
+            <p class="mini">HEADLESS → <b>jupy serve --no-browser --port 9000</b></p>
+          </div>
+        </div>
+        <div class="step reveal">
+          <div class="step-num">03</div>
+          <div>
+            <h3>Build</h3>
+            <p>Write a cell, hit <b>Shift+Enter</b>. Install a theme, spin up an environment, open the terminal — it's all already there.</p>
+            <div class="install-chip"><code><span class="p">$</span> jupy theme add nord-frost --use</code><button class="copy-btn" data-copy="jupy theme add nord-frost --use">COPY</button></div>
+            <p class="mini">HEALTH CHECK → <b>jupy doctor --full</b></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ================= FOOTER ================= -->
+<footer>
+  <div class="wrap">
+    <div class="foot-word">JUPY<em>.</em></div>
+    <div class="foot-tag">BRUTALIST LOCAL PYTHON NOTEBOOK — EST. 2026</div>
+    <div class="foot-grid">
+      <div>
+        <h4>THE PROJECT</h4>
+        <p class="foot-about">A notebook server that lives entirely on your machine. Thick borders, hard shadows, no telemetry, no accounts — just you and your Python.</p>
+      </div>
+      <div>
+        <h4>LINKS</h4>
+        <a href="https://github.com/hariomlohardev/pkg_jupy" target="_blank" rel="noopener">GitHub Repository ↗</a>
+        <a href="https://pypi.org/project/jupy-notebook/" target="_blank" rel="noopener">PyPI — jupy-notebook ↗</a>
+        <a href="https://github.com/hariomlohardev/pkg_jupy/issues" target="_blank" rel="noopener">Report a Bug ↗</a>
+      </div>
+      <div>
+        <h4>ECOSYSTEM</h4>
+        <a href="https://hariomlohardev.github.io/themes_jupy" target="_blank" rel="noopener">Theme Store ↗</a>
+        <a href="https://hariomlohardev.github.io/themes_jupy/#/contribute" target="_blank" rel="noopener">Publish a Theme ↗</a>
+        <a href="#cli">CLI Reference</a>
+      </div>
+      <div>
+        <h4>QUICK START</h4>
+        <a href="#install">Install Guide</a>
+        <a href="#shortcuts">Shortcuts</a>
+        <a href="#features">Features</a>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>MIT LICENSE © 2026 <b>HARIOMLOHARDEV</b></span>
+      <span>BUILT WITH 🟧 AND THICK BORDERS</span>
+    </div>
+  </div>
+</footer>
+
+<div id="toast" role="status"></div>
+
+<script>
+/* ============================================================
+   JUPY LANDING — living bits
+   ============================================================ */
+const $ = (s) => document.querySelector(s);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- toast ---------- */
+let toastTimer = null;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+/* ---------- copy anything with [data-copy] ---------- */
+document.querySelectorAll('[data-copy]').forEach(el => {
+  el.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(el.dataset.copy); } catch (e) {}
+    toast('⧉ COPIED → ' + el.dataset.copy);
+    if (el.classList.contains('copy-btn')) {
+      const old = el.textContent;
+      el.textContent = '✓ DONE'; el.classList.add('copied');
+      setTimeout(() => { el.textContent = old; el.classList.remove('copied'); }, 1100);
+    }
+  });
+});
+
+/* ---------- topbar shadow ---------- */
+addEventListener('scroll', () => $('#topbar').classList.toggle('scrolled', scrollY > 8), { passive: true });
+
+/* ---------- scroll reveals ---------- */
+const io = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+}, { threshold: 0.12 });
+document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+/* ---------- duplicate ticker for seamless loop ---------- */
+const track = $('#ticker-track');
+track.innerHTML += track.innerHTML;
+
+/* ---------- theme chips (live mockup reskin) ---------- */
+document.querySelectorAll('.theme-chip').forEach(ch => {
+  ch.addEventListener('click', () => {
+    document.querySelectorAll('.theme-chip').forEach(c => c.classList.remove('active'));
+    ch.classList.add('active');
+    $('#mockup').dataset.theme = ch.dataset.theme;
+    toast(ch.dataset.slug === 'default'
+      ? '↺ DEFAULT THEME RESTORED'
+      : '🎨 THEME APPLIED — TRY: jupy theme add ' + ch.dataset.slug);
+  });
+});
+
+/* ---------- widget slider demo ---------- */
+const slider = $('#w-slider');
+slider.addEventListener('input', () => {
+  $('#w-val').textContent = slider.value;
+  $('#w-fill').style.width = slider.value + '%';
+});
+
+/* ---------- mockup: typing cell loop ---------- */
+async function typeLoop() {
+  const target = $('#type-target'), out = $('#anim-output'),
+        count = $('#anim-count'), run = $('#anim-run');
+  const lines = ['for i in range(3):', "    print('brick #' + str(i))"];
+  while (true) {
+    target.textContent = ''; out.hidden = true; out.textContent = '';
+    count.textContent = '[ ]'; run.textContent = '▶'; run.classList.remove('running');
+    await sleep(900);
+    for (const line of lines) {
+      for (const ch of line) { target.textContent += ch; await sleep(30 + Math.random() * 50); }
+      target.textContent += '\n'; await sleep(180);
+    }
+    await sleep(400);
+    run.textContent = '⏹'; run.classList.add('running');
+    await sleep(650);
+    out.hidden = false;
+    for (let i = 0; i < 3; i++) { out.textContent += 'brick #' + i + '\n'; await sleep(240); }
+    count.textContent = '[2] · 0.03s';
+    run.textContent = '▶'; run.classList.remove('running');
+    await sleep(3400);
+  }
+}
+
+/* ---------- mockup: terminal loop ---------- */
+async function termLoop() {
+  const body = $('#term-body');
+  const seq = [
+    ['cmd', 'pip install numpy'],
+    ['ok',  'Successfully installed numpy-1.26.4'],
+    ['cmd', 'python'],
+    ['out', 'Python 3.12.4 (Jupy kernel)'],
+    ['py',  "print('hello from the shell')"],
+    ['ok',  'hello from the shell'],
+    ['cmd', 'jupy theme browse'],
+    ['ok',  'nord-frost · solarized · monokai'],
+  ];
+  const cursor = document.createElement('span');
+  cursor.className = 't-cursor';
+  function addLine(kind, text) {
+    const div = document.createElement('div');
+    if (kind === 'cmd') div.innerHTML = '<span class="t-prompt">(default) D:\\project&gt;</span> <span class="t-cmd"></span>';
+    else if (kind === 'py') div.innerHTML = '<span class="t-prompt">&gt;&gt;&gt;</span> <span class="t-cmd"></span>';
+    else div.innerHTML = '<span class="' + (kind === 'ok' ? 't-ok' : 't-out') + '"></span>';
+    div.lastElementChild.textContent = text;
+    while (body.children.length >= 9) body.removeChild(body.firstChild);
+    body.appendChild(div);
+    div.appendChild(cursor);
+  }
+  while (true) {
+    for (const [kind, text] of seq) {
+      addLine(kind, text);
+      await sleep(kind === 'cmd' || kind === 'py' ? 1100 : 700);
+    }
+    await sleep(2600);
+    body.innerHTML = ''; body.appendChild(cursor);
+  }
+}
+
+/* ---------- system bars ---------- */
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+let cpu = 34, ram = 52;
+setInterval(() => {
+  cpu = clamp(cpu + (Math.random() * 16 - 8), 6, 97);
+  ram = clamp(ram + (Math.random() * 8 - 4), 28, 90);
+  const cf = $('#cpu-fill'), rf = $('#ram-fill'), tc = $('#tile-cpu');
+  if (cf) cf.style.width = cpu + '%';
+  if (rf) rf.style.width = ram + '%';
+  if (tc) tc.style.width = cpu + '%';
+  const cv = $('#cpu-val'), rv = $('#ram-val'), tv = $('#tile-cpu-val');
+  if (cv) cv.textContent = Math.round(cpu) + '%';
+  if (rv) rv.textContent = (ram * 0.16).toFixed(1) + '/16 GB';
+  if (tv) tv.textContent = 'CPU ' + Math.round(cpu) + '%';
+}, 1400);
+
+/* ---------- kick off loops ---------- */
+if (!reduced) {
+  typeLoop();
+  termLoop();
+} else {
+  $('#type-target').textContent = "for i in range(3):\n    print('brick #' + str(i))";
+  const out = $('#anim-output');
+  out.hidden = false; out.textContent = 'brick #0\nbrick #1\nbrick #2\n';
+  $('#anim-count').textContent = '[2] · 0.03s';
+  $('#term-body').innerHTML =
+    '<div><span class="t-prompt">(default) D:\\project&gt;</span> <span class="t-cmd">jupy</span></div>' +
+    '<div><span class="t-ok">✓ server running on http://localhost:8000</span></div>';
+}
+</script>
+</body>
+</html>
