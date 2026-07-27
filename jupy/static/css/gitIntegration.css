@@ -5,5 +5,5 @@
 }
 #git-status:hover {
     background: var(--color-secondary);
-    color: #111827;
+    color: var(--color-on-secondary);
 }

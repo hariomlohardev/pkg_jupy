@@ -1,0 +1,48 @@
+name: "Monokai"
+author: "Jupy Samples"
+version: 1
+shape:
+  radius_sm: 6px
+  radius_md: 10px
+  border_width: 2px
+  shadow_style: soft
+density: comfortable
+colors:
+  light:
+    primary: "#F92672"
+    secondary: "#E6DB74"
+    success: "#A6E22E"
+    warning: "#FD971F"
+    danger: "#F92672"
+    surface: "#FFFFFF"
+    text: "#272822"
+    bg_well: "#F5F5F5"
+    border: "#272822"
+    shadow: "#272822"
+    on_primary: "#FFFFFF"
+    on_secondary: "#272822"
+    on_danger: "#FFFFFF"
+    muted: "#75715E"
+    terminal_bg: "#272822"
+    terminal_fg: "#F8F8F2"
+    terminal_accent: "#A6E22E"
+    plot_bg: "#FFFFFF"
+  dark:
+    primary: "#F92672"
+    secondary: "#E6DB74"
+    success: "#A6E22E"
+    warning: "#FD971F"
+    danger: "#F92672"
+    surface: "#272822"
+    text: "#F8F8F2"
+    bg_well: "#1e1f1c"
+    border: "#F8F8F2"
+    shadow: "#F8F8F2"
+    on_primary: "#FFFFFF"
+    on_secondary: "#272822"
+    on_danger: "#FFFFFF"
+    muted: "#75715E"
+    terminal_bg: "#272822"
+    terminal_fg: "#F8F8F2"
+    terminal_accent: "#A6E22E"
+    plot_bg: "#FFFFFF"

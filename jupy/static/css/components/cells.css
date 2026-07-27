@@ -1,7 +1,6 @@
 /* ==========================================================================
    Jupy Brutalism Design System - Cells & Output Styling
    ========================================================================== */
-
 .app-workspace {
   display: flex;
   flex: 1;
@@ -10,59 +9,50 @@
   overflow: hidden;
   position: relative;
 }
-
 .notebook-panel {
   flex: 1;
   overflow-y: auto;
   padding-bottom: 60px;
 }
-
 .notebook {
   max-width: 820px;
   width: 100%;
   margin: 0 auto;
   padding: 16px 12px;
 }
-
 /* Cell Card Container */
 .cell {
   display: flex;
   align-items: stretch;
-  gap: 8px;
+  gap: var(--cell-gap);
   background: var(--color-surface);
   border: var(--border-thick);
   border-radius: var(--rounded-md);
-  padding: 8px;
+  padding: var(--cell-padding);
   margin-bottom: 8px;
   box-shadow: var(--shadow-brutal);
   transition: transform 0.1s ease, box-shadow 0.1s ease;
 }
-
 .cell.selected {
-  border-top: 4px solid var(--color-secondary); /* Ochre Yellow #DAA144 */
+  border-top: 4px solid var(--color-secondary);
 }
-
 .cell.editing {
-  border-left: 6px solid var(--color-primary); /* Terracotta #DD614C */
+  border-left: 6px solid var(--color-primary);
 }
-
 /* Running Cell State */
 .cell.running {
   border-left: 6px solid var(--color-primary);
-  background: rgba(221, 97, 76, 0.08);
+  background: var(--color-primary-tint);
 }
-
 /* Queued / Pending Cell State */
 .cell.queued {
   border-left: 6px solid var(--color-secondary);
-  background: rgba(218, 161, 68, 0.08);
+  background: var(--color-secondary-tint);
 }
-
 .cell.queued .exec-count {
   color: var(--color-secondary);
   font-weight: 800;
 }
-
 /* Cell Gutter & Execution Controls */
 .cell-gutter {
   width: 28px;
@@ -72,14 +62,13 @@
   align-items: center;
   padding-top: 2px;
 }
-
 .run-btn {
   width: 24px;
   height: 24px;
   border-radius: var(--rounded-sm);
   border: var(--border-thick);
   background: var(--color-secondary);
-  color: #111827;
+  color: var(--color-on-secondary);
   font-size: 0.7rem;
   font-weight: 800;
   display: flex;
@@ -89,24 +78,20 @@
   box-shadow: 1px 1px 0px var(--color-shadow);
   transition: transform 0.1s ease;
 }
-
 .run-btn:hover {
   background: var(--color-primary);
-  color: #FFFFFF;
+  color: var(--color-on-primary);
 }
-
 .cell.running .run-btn {
   background: var(--color-danger);
-  color: #FFFFFF;
+  color: var(--color-on-danger);
 }
-
 .exec-count {
   margin-top: 6px;
   font-family: var(--font-mono);
   font-size: 0.68rem;
   font-weight: 700;
 }
-
 .cell-body {
   flex: 1;
   min-width: 0;
@@ -114,17 +99,15 @@
   flex-direction: column;
   gap: 6px;
 }
-
 .cell-editor {
   border: var(--border-thick);
   border-radius: var(--rounded-sm);
   overflow: hidden;
   background: var(--color-surface);
 }
-
 /* Scrollable Cell Output (Capped at 480px) */
 .cell-output {
-  padding: 6px 10px;
+  padding: var(--block-padding);
   border: var(--border-thick);
   border-radius: var(--rounded-sm);
   background: var(--color-surface);
@@ -138,12 +121,10 @@
   max-height: 480px;
   overflow-y: auto;
 }
-
 .cell-output .stderr-line {
   color: var(--color-danger);
   font-weight: 700;
 }
-
 /* Interactive Stdin Input Container */
 .cell-stdin-prompt {
   display: flex;
@@ -156,7 +137,6 @@
   border-radius: var(--rounded-sm);
   box-shadow: var(--shadow-brutal-sm);
 }
-
 .stdin-label {
   font-family: var(--font-mono);
   font-size: 0.75rem;
@@ -164,7 +144,6 @@
   color: var(--color-primary);
   white-space: nowrap;
 }
-
 .stdin-input {
   flex: 1;
   border: var(--border-thick);
@@ -176,12 +155,10 @@
   padding: 3px 8px;
   outline: none;
 }
-
 .stdin-input:focus {
   border-color: var(--color-secondary);
   background: var(--color-surface);
 }
-
 /* Single Column Stacked Plot Container */
 .cell-plots-wrapper {
   display: flex;
@@ -190,20 +167,18 @@
   margin: 8px 0;
   width: 100%;
 }
-
 .plot-container {
   width: 100%;
   display: flex;
   justify-content: center;
   align-items: center;
   padding: 8px;
-  background: #FFFFFF;
+  background: var(--color-plot-bg);
   border: var(--border-thick);
   border-radius: var(--rounded-sm);
   box-shadow: var(--shadow-brutal-sm);
   box-sizing: border-box;
 }
-
 .plot-container img.notebook-plot {
   width: 100%;
   height: auto;
@@ -211,7 +186,6 @@
   object-fit: contain;
   display: block;
 }
-
 /* Cell Side Toolbar */
 .cell-toolbar {
   flex-shrink: 0;
@@ -221,12 +195,10 @@
   opacity: 0;
   transition: opacity 0.15s ease;
 }
-
 .cell:hover .cell-toolbar,
 .cell.selected .cell-toolbar {
   opacity: 1;
 }
-
 .action-btn {
   border: var(--border-thick);
   background: var(--color-surface);
@@ -243,17 +215,14 @@
   cursor: pointer;
   box-shadow: 1px 1px 0px var(--color-shadow);
 }
-
 .action-btn:hover {
   background: var(--color-secondary);
-  color: #111827;
+  color: var(--color-on-secondary);
 }
-
 .action-danger:hover {
   background: var(--color-danger);
-  color: #FFFFFF;
+  color: var(--color-on-danger);
 }
-
 /* Inline Add Cell Dividers */
 .insert-bar {
   height: 16px;
@@ -263,7 +232,6 @@
   position: relative;
   margin: 2px 0;
 }
-
 .insert-line {
   position: absolute;
   left: 16px;
@@ -273,7 +241,6 @@
   opacity: 0;
   transition: opacity 0.15s ease;
 }
-
 .add-cell-btn {
   border: var(--border-thick);
   background: var(--color-surface);
@@ -287,19 +254,16 @@
   box-shadow: 1px 1px 0px var(--color-shadow);
   z-index: 2;
 }
-
 .insert-bar .add-cell-btn { opacity: 0; }
 .insert-bar:hover .insert-line,
 .insert-bar:hover .add-cell-btn,
 .insert-bar:focus-within .add-cell-btn {
   opacity: 1;
 }
-
 .add-cell-btn:hover {
   background: var(--color-primary);
-  color: #FFFFFF;
+  color: var(--color-on-primary);
 }
-
 .add-cell-bottom {
   max-width: 820px;
   width: 100%;
@@ -308,12 +272,10 @@
   display: flex;
   justify-content: center;
 }
-
 .add-cell-bottom .add-cell-btn {
   padding: 6px 14px;
   font-size: 0.75rem;
 }
-
 /* Bottom-Left Brutalist Toast Notifications */
 .toast-container {
   position: fixed;
@@ -325,12 +287,11 @@
   gap: 6px;
   pointer-events: none;
 }
-
 .toast-message {
   pointer-events: auto;
   padding: 6px 12px;
-  background: var(--color-secondary); /* Ochre Yellow #DAA144 */
-  color: #111827;
+  background: var(--color-secondary);
+  color: var(--color-on-secondary);
   border: var(--border-thick);
   border-radius: var(--rounded-sm);
   box-shadow: var(--shadow-brutal-sm);
@@ -341,18 +302,14 @@
   animation: toastIn 0.15s ease-out;
   transition: opacity 0.15s ease;
 }
-
 .toast-message.danger {
   background: var(--color-danger);
-  color: #FFFFFF;
+  color: var(--color-on-danger);
 }
-
 @keyframes toastIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
-
 /* Markdown preview */
 .markdown-preview {
   padding: 8px 12px;
@@ -395,7 +352,7 @@
 }
 .markdown-preview th {
   background: var(--color-secondary);
-  color: #111827;
+  color: var(--color-on-secondary);
 }
 /* Plot containers */
 .plot-container {
@@ -409,7 +366,6 @@
 .display-data-container video, .display-data-container audio {
   max-width: 100%;
 }
-
 /* Drag handle */
 .cell-drag-handle {
   cursor: grab;
@@ -420,12 +376,10 @@
   padding: 0 4px;
 }
 .cell-drag-handle:hover { opacity: 1; }
-
 /* Selected cells */
 .cell.selected {
   outline: 3px solid var(--color-secondary);
 }
-
 /* Presentation mode */
 body.presentation-mode .topbar,
 body.presentation-mode .system-bar-wrapper,
@@ -434,142 +388,175 @@ body.presentation-mode .terminal-panel {
   display: none !important;
 }
 body.presentation-mode .notebook-panel {
-  background: #fff;
+  background: var(--color-surface);
   transform: scale(0.8);
   transform-origin: top left;
 }
 body.presentation-mode .cell {
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-bg-well);
   box-shadow: none;
 }
-
 /* Find bar */
 #find-bar input {
   background: var(--color-surface);
   color: var(--color-text);
 }
-
 /* ==========================================================================
-   MARKDOWN CELL (cell-md) – 100% Seamless / No Highlights / No Borders
+   MARKDOWN CELL (cell-md) – Colab-like seamless styling
    ========================================================================== */
-
-/* Force completely transparent background and remove ALL borders/outlines/shadows 
-   across every possible state (default, hover, selected, editing, running) */
-.cell-md,
-.cell-md:hover,
-.cell-md.selected,
-.cell-md.editing,
-.cell-md.running {
+.cell-md {
   background: transparent !important;
   border: none !important;
-  outline: none !important;
   box-shadow: none !important;
-  padding: 16px 0 !important;
+  padding: 12px 8px !important;
   margin-bottom: 0 !important;
   border-radius: 0 !important;
   gap: 0 !important;
+  transition: background 0.2s ease, border-left 0.2s ease;
   position: relative;
 }
-
+/* Subtle hover state (token flips for dark mode automatically) */
+.cell-md:not(.editing):hover {
+  background: var(--color-hover-tint);
+  border-radius: var(--rounded-sm);
+}
+/* Selected state (Colab style: subtle left border + tint) */
+.cell-md.selected:not(.editing) {
+  background: var(--color-secondary-tint) !important;
+  border-left: 3px solid var(--color-secondary) !important;
+  padding-left: 12px !important;
+  border-radius: 0 var(--rounded-sm) var(--rounded-sm) 0;
+}
 /* Hide gutters, drag handles, and output areas completely */
 .cell-md .cell-gutter,
 .cell-md .cell-drag-handle,
 .cell-md .cell-output {
   display: none !important;
 }
-
 /* Editor host takes full width */
 .cell-md .cell-body {
   padding: 0 !important;
 }
-
 .cell-md .cell-editor {
   border: none !important;
   background: transparent !important;
   box-shadow: none !important;
-  outline: none !important;
   overflow: visible !important;
 }
-
-/* Toolbar hidden by default, extremely subtle on hover */
+/* EDITING STATE: Looks like a distinct card */
+.cell-md.editing {
+  background: var(--color-surface) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--rounded-sm) !important;
+  padding: 8px !important;
+  margin-bottom: 8px !important;
+  box-shadow: var(--shadow-brutal-sm) !important;
+}
+.cell-md.editing .cell-editor {
+  border: 1px solid var(--color-bg-well) !important;
+  background: var(--color-bg-well) !important;
+  border-radius: var(--rounded-sm);
+}
+/* Toolbar hidden by default, appears on hover/edit */
 .cell-md .cell-toolbar {
   opacity: 0;
+  margin-top: 0;
+  flex-direction: row;
+  gap: 8px;
   transition: opacity 0.2s;
 }
 .cell-md:hover .cell-toolbar,
 .cell-md.editing .cell-toolbar {
-  opacity: 0.3; /* Barely visible until you hover directly over the buttons */
+  opacity: 0.8;
 }
-.cell-md .cell-toolbar:hover {
-  opacity: 1;
-}
-
-/* Ghost Edit Button (Only appears faintly on hover) */
+/* Floating Edit Button (Colab style) */
 .md-edit-btn {
   position: absolute;
-  top: 16px;
-  right: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: transparent;
-  border: none;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   color: var(--color-text);
-  opacity: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  opacity: 0;
   transition: opacity 0.2s, background 0.2s;
   z-index: 10;
-  font-size: 0.9rem;
-  box-shadow: none !important;
+  font-size: 0.8rem;
+  box-shadow: var(--shadow-brutal-sm);
 }
-.cell-md:hover .md-edit-btn {
-  opacity: 0.4;
+.cell-md:not(.editing):hover .md-edit-btn {
+  opacity: 1;
 }
 .md-edit-btn:hover {
-  opacity: 1;
-  background: var(--color-bg-well);
+  background: var(--color-secondary);
+  color: var(--color-on-secondary);
 }
-
-/* Make the CodeMirror editor blend perfectly into the page base */
-.cell-md .CodeMirror,
-.cell-md.editing .CodeMirror {
-  background: transparent !important;
+/* Hide insert lines between markdown cells to maintain document flow */
+.cell-md + .insert-bar .insert-line,
+.insert-bar:has(+ .cell-md) .insert-line {
+  opacity: 0 !important;
+}
+.cell-md + .insert-bar:hover .insert-line,
+.insert-bar:has(+ .cell-md):hover .insert-line {
+  opacity: 1 !important;
+}
+/* ==========================================================================
+   MARKDOWN TYPOGRAPHY (Document Style)
+   ========================================================================== */
+.cell-md .markdown-preview {
+  padding: 0 !important;
   font-family: var(--font-body) !important;
   font-size: 1.05rem !important;
   line-height: 1.65 !important;
   color: var(--color-text) !important;
+}
+.cell-md .markdown-preview h1 {
+  font-size: 2em; font-weight: 800; margin: 0.8em 0 0.4em;
+  padding-bottom: 0.3em; border-bottom: 1px solid var(--color-bg-well);
+}
+.cell-md .markdown-preview h2 {
+  font-size: 1.5em; font-weight: 800; margin: 0.8em 0 0.4em;
+  padding-bottom: 0.2em; border-bottom: 1px solid var(--color-bg-well);
+}
+.cell-md .markdown-preview h3 { font-size: 1.25em; font-weight: 700; margin: 0.6em 0 0.3em; }
+.cell-md .markdown-preview h4 { font-size: 1.1em; font-weight: 700; margin: 0.5em 0 0.2em; }
+.cell-md .markdown-preview p { margin: 0.6em 0; }
+.cell-md .markdown-preview ul, .cell-md .markdown-preview ol { padding-left: 1.5em; margin: 0.5em 0; }
+.cell-md .markdown-preview li { margin: 0.2em 0; }
+.cell-md .markdown-preview blockquote {
+  border-left: 4px solid var(--color-secondary);
+  padding: 0.5em 1em; margin: 0.8em 0;
+  background: var(--color-bg-well); color: var(--color-text); opacity: 0.9;
+}
+.cell-md .markdown-preview code {
+  background: var(--color-bg-well); padding: 0.2em 0.4em; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 0.9em;
+}
+.cell-md .markdown-preview pre {
+  background: var(--color-bg-well); padding: 1em; overflow-x: auto;
+  border-radius: var(--rounded-sm); border: 1px solid var(--color-border);
+}
+.cell-md .markdown-preview pre code { background: transparent; padding: 0; }
+.cell-md .markdown-preview table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+.cell-md .markdown-preview th, .cell-md .markdown-preview td {
+  border: 1px solid var(--color-border); padding: 8px 12px; text-align: left;
+}
+.cell-md .markdown-preview th { background: var(--color-bg-well); font-weight: 700; }
+.cell-md .markdown-preview img { max-width: 100%; border-radius: var(--rounded-sm); margin: 1em 0; }
+.cell-md .markdown-preview a { color: var(--color-primary); text-decoration: underline; }
+.cell-md .markdown-preview hr { border: none; border-top: 2px solid var(--color-bg-well); margin: 1.5em 0; }
+/* Make the CodeMirror editor blend in when editing */
+.cell-md.editing .CodeMirror {
+  background: transparent !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.95rem !important;
+  line-height: 1.5 !important;
+  color: var(--color-text) !important;
   height: auto !important;
-  border: none !important;
-  outline: none !important;
-  box-shadow: none !important;
 }
-/* ============ MINIMIZE TOP/BOTTOM DISTANCE (markdown cells) ============ */
-
-/* Zero vertical padding on the cell itself (was 12px top + 12px bottom) */
-.cell-md {
-  padding: 0 8px !important;
-  margin-bottom: 0 !important;
-}
-
-/* Kill the empty band above the first element and below the last element */
-.cell-md .markdown-preview > :first-child { margin-top: 0 !important; }
-.cell-md .markdown-preview > :last-child  { margin-bottom: 0 !important; }
-
-/* Squeeze all vertical margins inside the preview */
-.cell-md .markdown-preview { padding: 0 !important; }
-.cell-md .markdown-preview p  { margin: 0.15em 0 !important; }
-.cell-md .markdown-preview h1,
-.cell-md .markdown-preview h2 { margin: 0.35em 0 0.15em !important; }
-.cell-md .markdown-preview h3,
-.cell-md .markdown-preview h4,
-.cell-md .markdown-preview h5,
-.cell-md .markdown-preview h6 { margin: 0.25em 0 0.1em !important; }
-.cell-md .markdown-preview ul,
-.cell-md .markdown-preview ol { margin: 0.15em 0 !important; }
-.cell-md .markdown-preview li { margin: 0 !important; }
-.cell-md .markdown-preview pre,
-.cell-md .markdown-preview blockquote { margin: 0.2em 0 !important; }
-.cell-md .markdown-preview hr { margin: 0.3em 0 !important; }

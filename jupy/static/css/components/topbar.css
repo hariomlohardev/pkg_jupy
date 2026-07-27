@@ -1,32 +1,189 @@
+/* ==========================================================================
+   Jupy Brutalism — Topbar (upgraded)
+   ========================================================================== */
 .topbar {
-  position: sticky; top: 0; z-index: 200; display: flex; align-items: center; gap: 12px;
-  padding: 6px 14px; background: var(--color-surface); border-bottom: var(--border-thick); flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 7px 14px;
+  background-color: var(--color-surface);
+  /* faint diagonal paper grain so the bar isn't flat */
+  background-image: repeating-linear-gradient(-45deg, transparent 0 6px, rgba(0,0,0,0.022) 6px 7px);
+  border-bottom: var(--border-thick);
+  /* ochre accent strip riding under the black border */
+  box-shadow: 0 3px 0 0 var(--color-secondary);
+  flex-shrink: 0;
 }
-.brand-block { display: flex; align-items: center; gap: 8px; }
-.logo-img { height: 24px; width: auto; object-fit: contain; }
-.brand-name { font-family: var(--font-display); font-size: 1.4rem; font-weight: 900; letter-spacing: -0.02em; color: var(--color-primary); }
 
-.title-block { display: flex; flex-direction: column; gap: 1px; }
+/* ---------- Brand stamp ---------- */
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-right: 14px;
+  border-right: var(--border-thick);
+}
+.logo-img {
+  height: 26px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(2px 2px 0 var(--color-shadow));
+}
+.brand-name {
+  display: inline-block;
+  position: relative;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: var(--color-primary);
+}
+.brand-name::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -4px;
+  height: 3px;
+  background: var(--color-secondary);
+}
+
+/* ---------- Menu group (RUNTIME / ENVIRONMENT) ---------- */
+.menu-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 14px;
+  border-right: var(--border-thick);
+}
+
+/* ---------- Title block (filename + status) ---------- */
+.title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 2px;
+}
+.filename-wrapper { display: flex; }
 .filename-input {
-  border: var(--border-thick); border-radius: var(--rounded-sm); background: var(--color-surface);
-  font-family: var(--font-display); font-size: 1.1rem; font-weight: 800; color: var(--color-text);
-  padding: 1px 6px; box-shadow: 1px 1px 0px var(--color-shadow);
+  min-width: 190px;
+  border: var(--border-thick);
+  border-radius: var(--rounded-sm);
+  background: var(--color-surface);
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--color-text);
+  padding: 1px 10px;
+  box-shadow: var(--shadow-brutal-sm);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
 }
-.filename-input:focus { outline: none; background: var(--color-secondary); color: #111827; }
-
-.status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 0.68rem; font-weight: 700; color: var(--color-text); }
-.status-indicator { width: 8px; height: 8px; border: 1px solid var(--color-border); background-color: var(--color-success); }
+.filename-input:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 var(--color-shadow);
+}
+.filename-input:focus {
+  outline: none;
+  background: var(--color-secondary);
+  color: var(--color-on-secondary);
+  transform: none;
+  box-shadow: inset 2px 2px 0 rgba(0,0,0,0.18);
+}
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 2px;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--color-text);
+  opacity: 0.85;
+}
+.status-indicator {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--color-border);
+  border-radius: 2px;
+  background-color: var(--color-success);
+  animation: status-breathe 2.4s ease-in-out infinite;
+}
+@keyframes status-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.3); }
+}
 
 .spacer { flex: 1; }
-.topbar-actions { display: flex; align-items: center; gap: 6px; }
 
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; border: var(--border-thick);
-  border-radius: var(--rounded-sm); padding: 4px 10px; font-family: var(--font-mono); font-size: 0.72rem;
-  font-weight: 700; cursor: pointer; box-shadow: var(--shadow-brutal-sm); user-select: none;
+/* ---------- Right-hand actions ---------- */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
 }
-.btn:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0px var(--color-shadow); }
-.btn:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0px var(--color-shadow); }
-.btn-secondary { background: var(--color-surface); color: var(--color-text); }
-.btn-primary { background: var(--color-primary); color: #FFFFFF; }
-.btn-warning { background: var(--color-warning); color: #FFFFFF; }
+/* divider before the first loose button (TERMINAL) after the dropdown menus */
+.topbar-actions > .runtime-menu + .btn {
+  position: relative;
+  margin-left: 8px;
+}
+.topbar-actions > .runtime-menu + .btn::before {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: 12%;
+  height: 76%;
+  width: 2px;
+  background: var(--color-border);
+  opacity: 0.3;
+}
+
+/* ---------- Buttons ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: var(--border-thick);
+  border-radius: var(--rounded-sm);
+  padding: 5px 11px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  box-shadow: var(--shadow-brutal-sm);
+  user-select: none;
+  transition: transform 0.1s ease, box-shadow 0.1s ease, background 0.1s ease, color 0.1s ease;
+}
+.btn:hover  { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 var(--color-shadow); }
+.btn:active { transform: translate(2px, 2px);   box-shadow: 0 0 0 var(--color-shadow); }
+.btn:focus-visible { outline: 3px solid var(--color-secondary); outline-offset: 2px; }
+
+.btn-secondary { background: var(--color-surface);  color: var(--color-text); }
+.btn-secondary:hover { background: var(--color-bg-well); }
+.btn-primary   { background: var(--color-primary);  color: var(--color-on-primary); }
+.btn-warning   { background: var(--color-warning);  color: var(--color-on-primary); }
+.btn-warning:hover { background: var(--color-secondary); color: var(--color-on-secondary); }
+
+/* SAVE is the primary action of the bar */
+#btn-save { background: var(--color-primary); color: var(--color-on-primary); }
+#btn-save:hover { background: var(--color-danger); }
+
+/* ---------- Responsive collapse ---------- */
+@media (max-width: 1220px) {
+  .brand-name { display: none; }
+  .brand-block { padding-right: 10px; }
+}
+@media (max-width: 1040px) {
+  #last-exec-time { display: none; }
+  .filename-input { min-width: 130px; font-size: 1rem; }
+}
+@media (max-width: 880px) {
+  .status { display: none; }
+  .btn { padding: 4px 8px; }
+  .topbar { gap: 8px; }
+}

@@ -1,0 +1,53 @@
+name: "Nord Frost"
+author: "Jupy Samples"
+version: 1
+fonts:
+  display: "Space Grotesk"
+  body: "Space Grotesk"
+  mono: "JetBrains Mono"
+  url: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700;800&family=JetBrains+Mono:wght@400;700&display=swap"
+shape:
+  radius_sm: 4px
+  radius_md: 8px
+  border_width: 2px
+  shadow_style: hard
+density: comfortable
+colors:
+  light:
+    primary: "#5E81AC"
+    secondary: "#EBCB8B"
+    success: "#A3BE8C"
+    warning: "#D08770"
+    danger: "#BF616A"
+    surface: "#ECEFF4"
+    text: "#2E3440"
+    bg_well: "#E5E9F0"
+    border: "#2E3440"
+    shadow: "#2E3440"
+    on_primary: "#ECEFF4"
+    on_secondary: "#2E3440"
+    on_danger: "#ECEFF4"
+    muted: "#6B7280"
+    terminal_bg: "#2E3440"
+    terminal_fg: "#D8DEE9"
+    terminal_accent: "#A3BE8C"
+    plot_bg: "#FFFFFF"
+  dark:
+    primary: "#81A1C1"
+    secondary: "#EBCB8B"
+    success: "#A3BE8C"
+    warning: "#D08770"
+    danger: "#BF616A"
+    surface: "#2E3440"
+    text: "#ECEFF4"
+    bg_well: "#242933"
+    border: "#D8DEE9"
+    shadow: "#D8DEE9"
+    on_primary: "#2E3440"
+    on_secondary: "#2E3440"
+    on_danger: "#ECEFF4"
+    muted: "#9CA3AF"
+    terminal_bg: "#2E3440"
+    terminal_fg: "#D8DEE9"
+    terminal_accent: "#A3BE8C"
+    plot_bg: "#FFFFFF"

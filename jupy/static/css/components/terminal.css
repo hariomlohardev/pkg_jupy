@@ -1,17 +1,15 @@
 /* ==========================================================================
-   Jupy Brutalism Design System - Split Terminal Drawer (Yellow Prompt & 80% Max Height)
+   Jupy Brutalism Design System - Split Terminal Drawer
    ========================================================================== */
-
 .terminal-panel[hidden],
 [hidden] {
   display: none !important;
 }
-
 .terminal-panel {
   width: 480px;
   min-width: 340px;
   max-width: 55vw;
-  background: #09090B;
+  background: var(--color-terminal-bg);
   border-left: var(--border-thick);
   display: flex;
   flex-direction: column;
@@ -19,7 +17,6 @@
   flex-shrink: 0;
   z-index: 100;
 }
-
 .terminal-header {
   padding: 6px 12px;
   background: var(--color-primary);
@@ -28,32 +25,29 @@
   align-items: center;
   justify-content: space-between;
 }
-
 .terminal-title {
   font-family: var(--font-mono);
   font-size: 0.75rem;
   font-weight: 800;
-  color: #FFFFFF;
+  color: var(--color-on-primary);
   letter-spacing: 0.04em;
 }
-
 .terminal-screen {
   flex: 1;
-  max-height: 80vh; /* Limits screen to 80% height */
+  max-height: 80vh;
   padding: 12px 14px 0 14px;
   overflow-y: auto;
-  background: #09090B;
+  background: var(--color-terminal-bg);
   cursor: text;
   display: flex;
   flex-direction: column;
   font-family: var(--font-mono);
 }
-
 .terminal-output {
   font-family: var(--font-mono);
   font-size: 0.82rem;
   line-height: 1.45;
-  color: #F9FAFB;
+  color: var(--color-terminal-fg);
   white-space: pre-wrap;
   word-break: break-all;
   margin: 0;
@@ -61,7 +55,6 @@
   border: none;
   background: transparent;
 }
-
 .terminal-input-line {
   display: flex;
   align-items: center;
@@ -70,28 +63,23 @@
   font-family: var(--font-mono);
   font-size: 0.82rem;
 }
-
-/* Yellow Ochre Prompt (#DAA144) */
 .terminal-prompt {
   color: var(--color-secondary);
   font-weight: 800;
   white-space: nowrap;
 }
-
 .terminal-input {
   flex: 1;
   border: none;
   background: transparent;
   font-family: var(--font-mono);
   font-size: 0.82rem;
-  color: #F9FAFB;
+  color: var(--color-terminal-fg);
   outline: none;
-  caret-color: #F9FAFB;
+  caret-color: var(--color-terminal-fg);
   padding: 0;
   margin: 0;
 }
-
-/* Keeps bottom 20% area permanently free */
 .terminal-bottom-spacer {
   height: 20vh;
   flex-shrink: 0;

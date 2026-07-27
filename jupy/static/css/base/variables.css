@@ -9,28 +9,48 @@
   --color-bg-well: #F3F4F6;
   --color-border: #111827;
   --color-shadow: #111827;
-  
+
+  /* NEW: text that sits ON colored surfaces */
+  --color-on-primary: #FFFFFF;
+  --color-on-secondary: #111827;
+  --color-on-danger: #FFFFFF;
+  --color-muted: #6B7280;
+
+  /* NEW: terminal + plot + tints */
+  --color-terminal-bg: #09090B;
+  --color-terminal-fg: #F9FAFB;
+  --color-terminal-accent: #34D399;
+  --color-plot-bg: #FFFFFF;
+  --color-primary-tint: rgba(221, 97, 76, 0.08);
+  --color-secondary-tint: rgba(218, 161, 68, 0.08);
+  --color-hover-tint: rgba(0, 0, 0, 0.03);
+
+  /* NEW: density (driven by theme engine) */
+  --cell-padding: 8px;
+  --cell-gap: 8px;
+  --block-padding: 6px 10px;
+
   --rounded-sm: 4px;
   --rounded-md: 6px;
-  
   --border-thick: 2px solid var(--color-border);
   --shadow-brutal-sm: 2px 2px 0px var(--color-shadow);
   --shadow-brutal: 3px 3px 0px var(--color-shadow);
   --shadow-brutal-lg: 5px 5px 0px var(--color-shadow);
-  
   --font-display: "Darker Grotesque", sans-serif;
   --font-body: "Darker Grotesque", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
 }
-
 html[data-theme="dark"] {
   --color-surface: #18181B;
   --color-text: #F9FAFB;
   --color-bg-well: #09090B;
   --color-border: #F9FAFB;
   --color-shadow: #F9FAFB;
+  --color-muted: #9CA3AF;
+  --color-hover-tint: rgba(255, 255, 255, 0.04);
+  --color-primary-tint: rgba(221, 97, 76, 0.12);
+  --color-secondary-tint: rgba(218, 161, 68, 0.12);
 }
-
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]) {
     --color-surface: #18181B;
@@ -38,5 +58,9 @@ html[data-theme="dark"] {
     --color-bg-well: #09090B;
     --color-border: #F9FAFB;
     --color-shadow: #F9FAFB;
+    --color-muted: #9CA3AF;
+    --color-hover-tint: rgba(255, 255, 255, 0.04);
+    --color-primary-tint: rgba(221, 97, 76, 0.12);
+    --color-secondary-tint: rgba(218, 161, 68, 0.12);
   }
 }

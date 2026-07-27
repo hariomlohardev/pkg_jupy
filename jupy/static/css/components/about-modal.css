@@ -41,7 +41,7 @@
   font-family: var(--font-mono);
   font-size: 0.85rem;
   font-weight: 800;
-  color: #FFFFFF;
+  color: var(--color-on-primary);
   letter-spacing: 0.05em;
 }
 
@@ -61,7 +61,7 @@
 }
 .about-close-btn:hover {
   background: var(--color-secondary);
-  color: #111827;
+  color: var(--color-on-secondary);
 }
 
 .about-body {

@@ -34,7 +34,9 @@ import { initSessionNotes } from './ui/sessionNotes.js';
 import { initCheckpoints } from './persistence/checkpoints.js';
 // OPTIONAL — uncomment only if static/js/persistence/autosave.js exists:
 // import { initAutosave } from './persistence/autosave.js';
- import { initFindBar } from './findReplace/findBar.js';
+import { initFindBar } from './findReplace/findBar.js';
+import { initThemeEngine } from './theme/themeEngine.js';
+import { initThemePanel } from './theme/themePanel.js';
 
 (() => {
   // ===== DOM Elements =====
@@ -92,8 +94,10 @@ import { initCheckpoints } from './persistence/checkpoints.js';
 
   window.appendCellOutput = appendCellOutput;
 
-  // ===== Theme & Metrics =====
-  initTheme(themeToggleBtn);
+  // ===== Theme Engine + Light/Dark =====
+  const themeEngine = initThemeEngine();
+  themeEngine.applyActive();          // apply saved custom theme (or default) before first paint
+  initTheme(themeToggleBtn);          // existing light/dark toggle still works within any theme
   initMetricsStream();
 
   // ===== Run Socket =====
@@ -204,7 +208,7 @@ import { initCheckpoints } from './persistence/checkpoints.js';
     onTrigger: () => envManager.openView('outline'),
   });
   initHyperparams(notebook, activityBar);
-
+  initThemePanel(activityBar, themeEngine, showToast);
   // ===== Git Integration (stays in the status bar) =====
   const statusBar = document.querySelector('.system-bar');
   if (statusBar) {

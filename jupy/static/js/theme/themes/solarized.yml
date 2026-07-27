@@ -1,0 +1,50 @@
+name: "Solarized"
+author: "Jupy Samples"
+version: 1
+shape:
+  radius_sm: 4px
+  radius_md: 6px
+  border_width: 2px
+  shadow_style: hard
+density: comfortable
+colors:
+  light:
+    primary: "#268bd2"
+    secondary: "#b58900"
+    success: "#859900"
+    warning: "#cb4b16"
+    danger: "#dc322f"
+    surface: "#fdf6e3"
+    text: "#586e75"
+    bg_well: "#eee8d5"
+    border: "#586e75"
+    shadow: "#586e75"
+    on_primary: "#fdf6e3"
+    on_secondary: "#fdf6e3"
+    on_danger: "#fdf6e3"
+    muted: "#93a1a1"
+    terminal_bg: "#002b36"
+    terminal_fg: "#93a1a1"
+    terminal_accent: "#2aa198"
+    plot_bg: "#FFFFFF"
+  dark:
+    primary: "#268bd2"
+    secondary: "#b58900"
+    success: "#859900"
+    warning: "#cb4b16"
+    danger: "#dc322f"
+    surface: "#002b36"
+    text: "#93a1a1"
+    bg_well: "#073642"
+    border: "#93a1a1"
+    shadow: "#93a1a1"
+    on_primary: "#fdf6e3"
+    on_secondary: "#002b36"
+    on_danger: "#fdf6e3"
+    muted: "#586e75"
+    terminal_bg: "#002b36"
+    terminal_fg: "#93a1a1"
+    terminal_accent: "#2aa198"
+    plot_bg: "#FFFFFF"
+
+
