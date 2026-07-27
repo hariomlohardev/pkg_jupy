@@ -16,12 +16,22 @@ from jupy.core.metrics import get_system_metrics
 from jupy.core.terminal import TerminalSession
 from jupy.core.venv import get_python_version, install_package, list_packages, uninstall_package
 from jupy.server.protocol import make_ws_accept, make_ws_frame, parse_ws_frame, make_ws_pong
+import urllib.parse
 
 STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
 VENV_DIR = os.path.abspath(".jupy_env")
 VENV_BIN = os.path.join(VENV_DIR, "Scripts") if sys.platform == "win32" else os.path.join(VENV_DIR, "bin")
 
 _kernel = None
+
+_theme_store = None
+
+def get_theme_store():
+    global _theme_store
+    if _theme_store is None:
+        from jupy.core.themes.store import ThemeStore
+        _theme_store = ThemeStore()
+    return _theme_store
 
 def get_kernel():
     global _kernel
@@ -318,6 +328,73 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                     except Exception as e:
                         self._send_json({"success": False, "error": str(e)})
 
+            # ---- THEMES (POST) ----
+            elif self.path == "/api/themes/install":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                unique_name = (data.get("unique_name") or "").strip()
+                activate = bool(data.get("activate", True))
+                try:
+                    store = get_theme_store()
+                    meta = store.install(unique_name, activate=activate)
+                    self._send_json({"success": True, "theme": meta, "active": store.get_active_name()})
+                except Exception as e:
+                    self._send_json({"success": False, "error": str(e)})
+
+            elif self.path == "/api/themes/uninstall":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                unique_name = (data.get("unique_name") or "").strip()
+                try:
+                    store = get_theme_store()
+                    store.uninstall(unique_name)
+                    self._send_json({"success": True, "active": store.get_active_name()})
+                except Exception as e:
+                    self._send_json({"success": False, "error": str(e)})
+
+            elif self.path == "/api/themes/activate":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                try:
+                    store = get_theme_store()
+                    if data.get("default"):
+                        store.reset_active()
+                    else:
+                        store.set_active((data.get("unique_name") or "").strip())
+                    self._send_json({"success": True, "active": store.get_active_theme()})
+                except Exception as e:
+                    self._send_json({"success": False, "error": str(e)})
+
+            elif self.path == "/api/themes/upload":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                content = data.get("content", "")
+                filename = data.get("filename") or "theme.yml"
+                name = data.get("name")
+                activate = bool(data.get("activate", True))
+                try:
+                    store = get_theme_store()
+                    info = store.install_from_text(content, filename=filename, unique_name=name, activate=activate)
+                    self._send_json({"success": True, "theme": info, "active": store.get_active_name()})
+                except Exception as e:
+                    self._send_json({"success": False, "error": str(e)})
+
+            elif self.path == "/api/themes/update":
+                data = json.loads(post_data.decode("utf-8")) if post_data else {}
+                try:
+                    store = get_theme_store()
+                    if data.get("all"):
+                        updated = store.update_all()
+                        self._send_json({"success": True, "updated": updated})
+                    else:
+                        meta = store.update((data.get("unique_name") or "").strip())
+                        self._send_json({"success": True, "theme": meta})
+                except Exception as e:
+                    self._send_json({"success": False, "error": str(e)})
+
+            elif self.path == "/api/themes/refresh":
+                try:
+                    reg = get_theme_store().registry.fetch_registry(force=True)
+                    self._send_json({"success": True, "count": reg.get("count", len(reg.get("themes", [])))})
+                except Exception as e:
+                    self._send_json({"success": False, "error": str(e)})
+
             else:
                 self.send_error(404, "Endpoint not found")
 
@@ -398,6 +475,53 @@ class JupyHTTPHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "Git timed out"})
             except Exception as e:
                 self._send_json({"error": str(e)})
+
+        # ---- THEMES (GET) ----
+        elif self.path == "/api/themes/registry" or self.path.startswith("/api/themes/registry?"):
+            refresh = "refresh=1" in self.path
+            try:
+                reg = get_theme_store().registry.fetch_registry(force=refresh)
+                self._send_json(reg)
+            except Exception as e:
+                self._send_json({"error": str(e), "themes": []})
+
+        elif self.path == "/api/themes/installed":
+            try:
+                store = get_theme_store()
+                self._send_json({
+                    "installed": store.list_installed(),
+                    "active": store.get_active_name(),
+                    "updates": store.check_updates(),
+                })
+            except Exception as e:
+                self._send_json({"error": str(e), "installed": []})
+
+        elif self.path == "/api/themes/active":
+            try:
+                self._send_json(get_theme_store().get_active_theme())
+            except Exception as e:
+                self._send_json({"error": str(e), "is_default": True, "theme": None})
+
+        elif self.path.startswith("/api/themes/preview/"):
+            name = urllib.parse.unquote(self.path[len("/api/themes/preview/"):]).strip("/")
+            store = get_theme_store()
+            png = store.preview_path(name)
+            if png and os.path.isfile(png):
+                with open(png, "rb") as f:
+                    data = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                url = store.preview_remote_url(name)
+                if url:
+                    self.send_response(302)
+                    self.send_header("Location", url)
+                    self.end_headers()
+                else:
+                    self.send_error(404, "No preview")
 
         # ---- VARIABLE LIST (GET) ----
         elif self.path == "/api/variables/list":

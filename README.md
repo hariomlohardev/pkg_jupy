@@ -1,335 +1,278 @@
-# Jupy
+<div align="center">
 
-**Jupy** is a lightweight, local-first, brutalist Python notebook server.
+# 🟧 Jupy
 
-It gives you a fast local notebook environment with code cells, markdown cells,
-rich output, plots, widgets, debugger, variable explorer, file browser,
-environment manager, pip manager, terminal, checkpoints, exports, and CLI tools.
+### Brutalist Local Python Notebook
 
-Everything runs locally on your machine.
+**A fast, self-contained notebook server with terminal, theme store, environments, debugger, widgets, and exports — all in one `pip install`.**
 
----
+[![PyPI version](https://img.shields.io/pypi/v/jupy-notebook?color=DD614C&label=PyPI&style=flat-square)](https://pypi.org/project/jupy-notebook/)
+[![Python](https://img.shields.io/pypi/pyversions/jupy-notebook?style=flat-square)](https://pypi.org/project/jupy-notebook/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-DAA144?style=flat-square)](https://opensource.org/licenses/MIT)
+[![Downloads](https://img.shields.io/pypi/dm/jupy-notebook?style=flat-square)](https://pypi.org/project/jupy-notebook/)
 
-## Badges
-
-<p align="center">
-  <a href="https://pypi.org/project/jupy-notebook/">
-    <img src="https://img.shields.io/pypi/v/jupy-notebook.svg?label=PyPI" alt="PyPI version" />
-  </a>
-  <a href="https://pypi.org/project/jupy-notebook/">
-    <img src="https://img.shields.io/pypi/pyversions/jupy-notebook.svg" alt="Python versions" />
-  </a>
-  <a href="https://github.com/hariomlohardev/pkg_jupy/LICENSE">
-    <img src="https://img.shields.io/github/license/hariomlohardev/pkg_jupy.svg" alt="License" />
-  </a>
-  <a href="https://github.com/hariomlohardev/pkg_jupy/issues">
-    <img src="https://img.shields.io/github/issues/hariomlohardev/pkg_jupy.svg" alt="Issues" />
-  </a>
-  <a href="https://github.com/hariomlohardev/pkg_jupy">
-    <img src="https://img.shields.io/github/stars/hariomlohardev/pkg_jupy.svg?style=social" alt="GitHub stars" />
-  </a>
-</p>
+</div>
 
 ---
 
-## Features
-
-- Local Python notebook server
-- Code cells with Python execution
-- Markdown cells with live preview
-- Rich output rendering
-- Matplotlib plot support
-- Interactive widgets
-- Variable explorer
-- Debugger panel
-- File browser
-- Session notes
-- Checkpoints
-- Environment manager
-- Pip package manager
-- Real terminal
-- Export notebook to HTML, Python, Markdown, and print-ready PDF
-- Headless notebook execution
-- Command-line interface
-- Theme engine
-- Brutalist UI design
+<!-- 👉 ADD A SCREENSHOT HERE — this is the #1 thing that makes people install -->
+<!-- ![Jupy Screenshot](https://raw.githubusercontent.com/hariomlohardev/jupy/main/docs/screenshot.png) -->
 
 ---
 
-## Installation
+## ✨ Features
 
-Install from PyPI:
-
-```bash
-python -m pip install jupy-notebook
-```
-
-For full terminal support on Windows, install:
-
-```bash
-python -m pip install "jupy-notebook[terminal]"
-```
-
-For all optional features:
-
-```bash
-python -m pip install "jupy-notebook[all]"
-```
-### Optional extras
-
-| Extra      | Purpose |
-|------------|---------|
-| `terminal` | Full Windows terminal support using `pywinpty` |
-| `watch`    | File watching support using `watchdog` |
-| `nb`       | Headless notebook execution using `nbformat` |
-| `all`      | All optional dependencies |
-
-Example:
-
-```bash
-python -m pip install "jupy-notebook[terminal]"
-```
+| Category | What you get |
+|---|---|
+| **Notebook** | Code cells, markdown cells, rich output, plots (matplotlib/plotly/bokeh/altair), MathJax, drag-and-drop reorder, cell folding, collapsible headings |
+| **Terminal** | Real PTY terminal (xterm.js + ConPTY on Windows) — tab completion, arrow history, colors, vim, python REPL |
+| **Theme Store** | Browse, install, and apply community themes from [themes_jupy](https://github.com/hariomlohardev/themes_jupy) — via CLI or the in-app 🎨 panel |
+| **Environments** | Global, named, or per-project virtual environments — switch without restarting |
+| **Pip Manager** | Install / uninstall / search packages from the UI or CLI |
+| **Debugger** | Breakpoints, step over/into/out, call stack, post-mortem `%debug` |
+| **Widgets** | Full ipywidgets-style system: sliders, dropdowns, checkboxes, tabs, accordions, `interact()` |
+| **Autocomplete** | Jedi-powered completions + hover documentation tooltips |
+| **Exports** | HTML, Python script, Markdown, PDF (print-ready) |
+| **Headless Run** | Execute notebooks from the CLI: `jupy run notebook.ipynb` |
+| **Checkpoints** | Snapshot and restore notebook versions |
+| **Git Integration** | Branch status + one-click commit from the status bar |
+| **System Monitor** | Live CPU / RAM / GPU footer bar |
+| **Command Palette** | `Ctrl+Shift+P` for every action |
+| **Keyboard Shortcuts** | Jupyter-style: `Shift+Enter`, `A`/`B`/`D D`, `Ctrl+Enter`, and more |
+| **Presentation Mode** | Distraction-free fullscreen slides |
+| **Zen Mode** | Hide all chrome, focus on code |
+| **Find & Replace** | `Ctrl+F` across all cells |
+| **Themes** | Light/dark toggle + custom theme engine (YAML/JSON tokens) |
+| **Magics** | `%time`, `%timeit`, `%run`, `%pip`, `%matplotlib`, `%who`, `%reset`, `%debug`, and 30+ more |
 
 ---
 
-## Install from source
+## 📦 Installation
 
 ```bash
-git clone https://github.com/hariomlohardev/pkg_jupy.git
-cd pkg_jupy
-python -m pip install -e ".[all]"
+pip install jupy-notebook
 ```
 
-Then run:
+**Windows terminal** (full ConPTY support):
 
 ```bash
-jupy --help
+pip install "jupy-notebook[terminal]"
 ```
+
+**Everything** (terminal + file watching + headless execution):
+
+```bash
+pip install "jupy-notebook[all]"
+```
+
+### Requirements
+
+- Python 3.9+
+- No other mandatory dependencies (psutil auto-installs)
 
 ---
 
-## Quickstart
-
-Start the notebook server:
+## 🚀 Quickstart
 
 ```bash
+# Start the notebook server (opens browser automatically)
 jupy
-```
 
-Or explicitly:
+# Or explicitly
+jupy serve --port 8000
 
-```bash
-jupy serve
-```
-
-Then open your browser at:
-
-```text
-http://localhost:8000
-```
-
-You can also run:
-
-```bash
-python -m jupy
-```
-
----
-
-## CLI Commands
-
-### Server
-
-```bash
-jupy
-jupy serve
-jupy serve --port 9000
+# Start without opening a browser
 jupy serve --no-browser
+
+# Serve a specific project folder
 jupy serve --dir ./my_project
 ```
 
-### Doctor / Health Check
+Then open **http://localhost:8000** and start coding.
 
-```bash
-jupy doctor
-jupy doctor --full
+---
+
+## 🖥️ CLI Reference
+
 ```
+jupy                          Start the notebook server (default)
+jupy serve [options]          Start the notebook server
+jupy doctor [--full]          Check installation health
+jupy status                   Show environment + version info
 
-### Status
+jupy theme add <name>         Install a theme from the store
+jupy theme browse             List all available themes
+jupy theme search <query>     Search the theme store
+jupy theme list               List installed themes
+jupy theme use <name>         Activate a theme
+jupy theme remove <name>      Uninstall a theme
+jupy theme update [--all]     Update theme(s)
+jupy theme import <file>      Install from a local .yml/.json
+jupy theme export <name>      Export a theme to a file
+jupy theme current            Show the active theme
+jupy theme reset              Reset to the Jupy default
+jupy theme new <name>         Scaffold a new theme for contributors
+jupy theme refresh            Force-refresh the theme store cache
 
-```bash
-jupy status
-```
+jupy env list                 List environments
+jupy env create <name>        Create a global environment
+jupy env use <mode> [name]    Set active environment (global/project/named)
+jupy env info                 Show active environment details
+jupy env path                 Print active environment path
+jupy env delete <name>        Delete an environment
 
-### Environments
+jupy pip list                 List installed packages
+jupy pip install <spec>       Install a package
+jupy pip uninstall <name>     Uninstall a package
 
-```bash
-jupy env list
-jupy env create datasci
-jupy env use named datasci
-jupy env use global
-jupy env use project
-jupy env info
-jupy env path
-jupy env delete datasci
-```
-
-### Pip
-
-```bash
-jupy pip list
-jupy pip install numpy
-jupy pip install "requests==2.32.0"
-jupy pip uninstall numpy
-```
-
-### Notebooks
-
-```bash
-jupy new analysis
-jupy run analysis.ipynb --output executed.ipynb
-jupy export analysis.ipynb --format html
-jupy export analysis.ipynb --format py
-jupy export analysis.ipynb --format md
-jupy export analysis.ipynb --format pdf
-```
-
-### Project Utilities
-
-```bash
-jupy init
-jupy init --sample
-jupy combine --output files.md
-jupy config show
-jupy config set env_mode named
-jupy config set env_name datasci
+jupy run <notebook> [-o out]  Execute a notebook headlessly
+jupy export <notebook> --format html|py|md|pdf
+jupy new <name>               Create a new notebook
+jupy init [--sample]          Initialize a folder for Jupy
+jupy combine [-o files.md]    Compile project files into one Markdown
+jupy config show|set          Show or set per-folder config
 ```
 
 ---
 
-## Windows Terminal
+## 🎨 Theme Store
 
-On Windows, the real terminal requires `pywinpty`.
+Jupy connects to the [themes_jupy](https://github.com/hariomlohardev/themes_jupy) community registry.
 
-Install it with:
-
-```bash
-python -m pip install pywinpty
-```
-
-Or install Jupy with terminal support:
+**From the CLI:**
 
 ```bash
-python -m pip install "jupy-notebook[terminal]"
+jupy theme browse              # see what's available
+jupy theme add nord-frost      # install
+jupy theme use nord-frost      # activate
 ```
 
-Without `pywinpty`, Windows falls back to a limited pipe-based terminal.
+**From the browser:** click the 🎨 icon on the left activity rail → **STORE** tab → browse previews → click **INSTALL**.
 
----
+**Create your own theme:**
 
-## Project Structure
-
-```text
-pkg_jupy/
-  pyproject.toml
-  README.md
-  LICENSE
-  MANIFEST.in
-  create_readme.py
-  jupy/
-    __init__.py
-    __main__.py
-    cli.py
-    combine.py
-    run_notebook.py
-    core/
-      __init__.py
-      autocomplete.py
-      envmanager.py
-      metrics.py
-      terminal.py
-      venv.py
-      kernel/
-        __init__.py
-        manager.py
-        worker_script.py
-    server/
-      __init__.py
-      handlers.py
-      protocol.py
-    static/
-      index.html
-      css/
-      js/
+```bash
+jupy theme new my-theme        # scaffolds theme.yml + about.json
+# edit the files, add a preview.png, then open a PR to themes_jupy
 ```
 
 ---
 
-## Development
+## ⌨️ Keyboard Shortcuts
 
-Clone the repository:
+### Command Mode (press `Esc` first)
 
-```bash
-git clone https://github.com/hariomlohardev/pkg_jupy.git
-cd pkg_jupy
-```
+| Shortcut | Action |
+|---|---|
+| `Shift+Enter` | Run cell & select next |
+| `Ctrl+Enter` | Run cell in place |
+| `Alt+Enter` | Run cell & insert below |
+| `Enter` | Enter edit mode |
+| `A` | Insert cell above |
+| `B` | Insert cell below |
+| `D D` | Delete cell |
+| `Z` | Undo delete |
+| `↑ / K` | Select cell above |
+| `↓ / J` | Select cell below |
+| `Ctrl+Shift+↑/↓` | Move cell up/down |
+| `I I` | Interrupt kernel |
+| `0 0` | Restart kernel |
+| `Ctrl+Shift+M` | Merge selected cells |
+| `Ctrl+Shift+-` | Split cell at cursor |
+| `Ctrl+Shift+P` | Command palette |
+| `Ctrl+Shift+?` | Shortcuts help |
 
-Create a virtual environment:
+### Edit Mode
 
-```bash
-python -m venv .venv
-```
-
-Activate it:
-
-### Windows
-
-```bash
-.venv\Scripts\activate
-```
-
-### macOS / Linux
-
-```bash
-source .venv/bin/activate
-```
-
-Install in editable mode:
-
-```bash
-python -m pip install -e ".[all]"
-```
-
-Run:
-
-```bash
-jupy --help
-jupy doctor --full
-jupy serve --no-browser
-```
-
-
+| Shortcut | Action |
+|---|---|
+| `Esc` | Back to command mode |
+| `Ctrl+Space` | Trigger autocomplete |
+| `Ctrl+/` | Toggle line comment |
+| `Alt+↑/↓` | Move line up/down |
+| `Ctrl+F` | Find & replace |
+| `Ctrl+S` | Save notebook to server |
 
 ---
 
-## Version
+## 📁 Project Structure
 
-Current version: **0.1.0**
+```
+my_project/
+├── .jupy/
+│   ├── config.json          # per-folder env config
+│   └── checkpoints/         # notebook snapshots
+├── my_notebook.ipynb
+└── ...
+```
+
+Global data (environments, themes) lives in your OS app-data folder:
+
+| OS | Path |
+|---|---|
+| Windows | `%LOCALAPPDATA%\Jupy\` |
+| macOS | `~/Library/Application Support/Jupy/` |
+| Linux | `~/.local/share/jupy/` |
 
 ---
 
-## Repository
+## 🛠️ Development
 
-GitHub: https://github.com/hariomlohardev/pkg_jupy
+```bash
+git clone https://github.com/hariomlohardev/jupy.git
+cd jupy
+pip install -e ".[all]"
+jupy serve
+```
 
-Issues: https://github.com/hariomlohardev/pkg_jupy/issues
+### Building & Publishing
 
-PyPI: https://pypi.org/project/jupy-notebook/
+```bash
+pip install build twine
+python -m build
+twine check dist/*
+twine upload dist/*
+```
 
 ---
 
-## License
+## 🤝 Contributing
 
-MIT License
+1. Fork the repo
+2. Create a feature branch: `git checkout -b feat/my-feature`
+3. Commit: `git commit -m "feat: add my feature"`
+4. Push: `git push origin feat/my-feature`
+5. Open a Pull Request
 
-Copyright (c) 2026 hariomlohardev
+### Contributing Themes
+
+```bash
+jupy theme new my-theme
+# edit theme.yml + about.json, add preview.png
+# open a PR to https://github.com/hariomlohardev/themes_jupy
+```
+
+---
+
+## 📄 License
+
+[MIT](LICENSE)
+
+---
+
+## 🙏 Acknowledgments
+
+- Design inspired by Jupyter, Google Colab, and VS Code
+- Terminal powered by [xterm.js](https://xtermjs.org/) + [pywinpty](https://github.com/andfoy/pywinpty)
+- Theme store powered by [themes_jupy](https://github.com/hariomlohardev/themes_jupy)
+- Editor powered by [CodeMirror 5](https://codemirror.net/5/)
+
+---
+
+<div align="center">
+
+**Made with 🟧 by [hariomlohardev](https://github.com/hariomlohardev)**
+
+[Report Bug](https://github.com/hariomlohardev/jupy/issues) · [Request Feature](https://github.com/hariomlohardev/jupy/issues) · [Theme Store](https://github.com/hariomlohardev/themes_jupy)
+
+</div>

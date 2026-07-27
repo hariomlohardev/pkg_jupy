@@ -885,6 +885,10 @@ def build_parser():
 # Main
 # ---------------------------------------------------------------------------
 def main(argv=None):
+    if len(sys.argv) > 1 and sys.argv[1] == 'theme':
+        from jupy.core.themes.cli import run_theme_command
+        sys.exit(run_theme_command(sys.argv[2:]))
+        
     argv = sys.argv[1:] if argv is None else list(argv)
 
     parser = build_parser()
@@ -893,6 +897,7 @@ def main(argv=None):
     #   jupy
     #   jupy --port 9000
     # both start the server.
+    
     if not argv:
         argv = ["serve"]
     elif argv[0] not in COMMANDS and argv[0] not in ("-h", "--help", "--version"):

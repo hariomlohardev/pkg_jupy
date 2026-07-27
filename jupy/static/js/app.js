@@ -37,6 +37,7 @@ import { initAutosave } from './persistence/autosave.js';
 import { initFindBar } from './findReplace/findBar.js';
 import { initThemeEngine } from './theme/themeEngine.js';
 import { initThemePanel } from './theme/themePanel.js';
+import { createThemeStore, syncThemeFromServer } from './theme/themeStore.js';
   // import { initThemeEngine } from './theme/themeEngine.js';
 
 (() => {
@@ -99,6 +100,9 @@ import { initThemePanel } from './theme/themePanel.js';
   const themeEngine = initThemeEngine();
   themeEngine.applyActive();
   window.__jupy_themeEngine = themeEngine;
+  const themeStore = createThemeStore();
+  window.__jupy_themeStore = themeStore;
+  syncThemeFromServer(themeEngine, themeStore);
   initTheme(themeToggleBtn);
   initMetricsStream();
 
@@ -210,7 +214,7 @@ import { initThemePanel } from './theme/themePanel.js';
     onTrigger: () => envManager.openView('outline'),
   });
   initHyperparams(notebook, activityBar);
-  initThemePanel(activityBar, themeEngine, showToast);
+  initThemePanel(activityBar, themeEngine, showToast, themeStore);
   // ===== Git Integration (stays in the status bar) =====
   const statusBar = document.querySelector('.system-bar');
   if (statusBar) {
