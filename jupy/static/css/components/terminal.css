@@ -1,10 +1,8 @@
-/* ==========================================================================
-   Jupy Brutalism Design System - Split Terminal Drawer
-   ========================================================================== */
 .terminal-panel[hidden],
 [hidden] {
   display: none !important;
 }
+
 .terminal-panel {
   width: 480px;
   min-width: 340px;
@@ -17,6 +15,7 @@
   flex-shrink: 0;
   z-index: 100;
 }
+
 .terminal-header {
   padding: 6px 12px;
   background: var(--color-primary);
@@ -24,7 +23,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
+
 .terminal-title {
   font-family: var(--font-mono);
   font-size: 0.75rem;
@@ -32,55 +33,17 @@
   color: var(--color-on-primary);
   letter-spacing: 0.04em;
 }
+
 .terminal-screen {
   flex: 1;
-  max-height: 80vh;
-  padding: 12px 14px 0 14px;
-  overflow-y: auto;
+  min-height: 0;
   background: var(--color-terminal-bg);
-  cursor: text;
-  display: flex;
-  flex-direction: column;
-  font-family: var(--font-mono);
+  overflow: hidden;
+  display: block;
+  padding: 8px 4px 6px 8px;
 }
-.terminal-output {
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-  line-height: 1.45;
-  color: var(--color-terminal-fg);
-  white-space: pre-wrap;
-  word-break: break-all;
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: transparent;
-}
-.terminal-input-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-}
-.terminal-prompt {
-  color: var(--color-secondary);
-  font-weight: 800;
-  white-space: nowrap;
-}
-.terminal-input {
-  flex: 1;
-  border: none;
-  background: transparent;
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-  color: var(--color-terminal-fg);
-  outline: none;
-  caret-color: var(--color-terminal-fg);
-  padding: 0;
-  margin: 0;
-}
-.terminal-bottom-spacer {
-  height: 20vh;
-  flex-shrink: 0;
+
+.terminal-xterm-host {
+  width: 100%;
+  height: 100%;
 }

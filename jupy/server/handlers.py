@@ -588,83 +588,74 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                 traceback.print_exc()
 
     def handle_terminal_ws(self):
-        import re
-        kernel = get_kernel()
-        env_info = kernel.env_info
+        ws_lock = threading.Lock()
+
+        def send(data_dict):
+            with ws_lock:
+                try:
+                    self.wfile.write(make_ws_frame(json.dumps(data_dict)))
+                    self.wfile.flush()
+                except Exception as e:
+                    print(f"[terminal] SEND FAILED: {e}", flush=True)
+
+        try:
+            kernel = get_kernel()
+            env_info = kernel.env_info
+        except Exception as e:
+            send({"type": "output", "data": f"\r\n[terminal error] kernel failed: {e}\r\n"})
+            return
 
         env = os.environ.copy()
         env["VIRTUAL_ENV"] = env_info["path"]
         env["PATH"] = env_info["bin"] + os.path.pathsep + env.get("PATH", "")
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
-        # "dumb" keeps output clean for the line-based front-end (no cursor gymnastics)
-        env["TERM"] = "dumb"
-        # Make it obvious which environment is active
+        env["TERM"] = "xterm-256color"
         env["PS1"] = f"({env_info['name']}) \\u@\\h:\\w\\$ "
 
-        ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-
-        ws_lock = threading.Lock()
-        def send(data_dict):
-            with ws_lock:
-                try:
-                    self.wfile.write(make_ws_frame(json.dumps(data_dict)))
-                    self.wfile.flush()
-                except Exception:
-                    pass
+        print(f"[terminal] handler started, platform={sys.platform}", flush=True)
 
         if sys.platform != "win32":
-            # ================= UNIX: real PTY =================
+            # ================= UNIX =================
             import pty, termios, fcntl, struct, signal
-
             master_fd, slave_fd = pty.openpty()
             try:
                 fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
             except Exception:
                 pass
-
             shell = env.get("SHELL", "/bin/bash")
-
             def preexec():
                 os.setsid()
-                try:
-                    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
-                except Exception:
-                    pass
-
+                try: fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+                except Exception: pass
             try:
                 proc = subprocess.Popen(
                     [shell, "-i"],
                     stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
-                    env=env, cwd=os.getcwd(),
-                    preexec_fn=preexec,
-                    close_fds=True,
+                    env=env, cwd=os.getcwd(), preexec_fn=preexec, close_fds=True,
                 )
             except Exception as e:
                 send({"type": "output", "data": f"Could not start shell: {e}\r\n"})
                 os.close(master_fd); os.close(slave_fd)
                 return
-            os.close(slave_fd)  # parent keeps only the master side
-
+            os.close(slave_fd)
             def reader():
                 while True:
                     try:
-                        data = os.read(master_fd, 4096)   # returns whatever is available — no blocking for a full buffer
+                        data = os.read(master_fd, 4096)
                     except OSError:
                         break
                     if not data:
                         break
                     text = data.decode("utf-8", errors="replace")
-                    send({"type": "output", "data": ANSI_ESCAPE.sub("", text)})
+                    print(f"[terminal] PTY output ({len(text)} bytes): {text[:120]!r}", flush=True)
+                    send({"type": "output", "data": text})
                 send({"type": "output", "data": "\r\n[shell exited]\r\n"})
-
             threading.Thread(target=reader, daemon=True).start()
-
             while True:
                 msg, opcode = parse_ws_frame(self.rfile)
                 if opcode == 0x8 or msg is None:
-                    try:
-                        os.killpg(os.getpgid(proc.pid), signal.SIGHUP)
+                    try: os.killpg(os.getpgid(proc.pid), signal.SIGHUP)
                     except Exception:
                         try: proc.terminate()
                         except Exception: pass
@@ -672,46 +663,58 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                     except Exception: pass
                     break
                 if opcode == 0x9:
-                    with ws_lock:
-                        self._ws_handle_ping(msg)
+                    with ws_lock: self._ws_handle_ping(msg)
                     continue
                 try:
                     data = json.loads(msg)
                     if data.get("type") == "input":
+                        print(f"[terminal] input → PTY: {data.get('data','')!r}", flush=True)
                         os.write(master_fd, data.get("data", "").encode("utf-8"))
                     elif data.get("type") == "resize":
                         rows = data.get("rows", 24); cols = data.get("cols", 80)
                         fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
                 except Exception:
                     pass
-
         else:
-            # ================= WINDOWS: ConPTY (pywinpty) with pipe fallback =================
+            # ================= WINDOWS =================
             try:
                 import winpty
                 have_conpty = True
+                print("[terminal] pywinpty FOUND — using ConPTY", flush=True)
             except ImportError:
                 have_conpty = False
+                print("[terminal] pywinpty NOT FOUND — will use pipe fallback", flush=True)
 
+            conpty = None
             if have_conpty:
                 try:
                     conpty = winpty.PTY(80, 24)
-                    conpty.spawn("cmd.exe", cwd=os.getcwd(), env=env)
+                    # pywinpty 1.x needs env as a null-separated string, not a dict
+                    env_str = "\0".join(f"{k}={v}" for k, v in env.items()) + "\0\0"
+                    conpty.spawn("cmd.exe", cwd=os.getcwd(), env=env_str)
+                    print(f"[terminal] ConPTY spawned OK, alive={conpty.isalive()}", flush=True)
                 except Exception as e:
+                    print(f"[terminal] ConPTY FAILED: {e}", flush=True)
                     send({"type": "output", "data": f"ConPTY failed ({e}); falling back to pipes.\r\n"})
-                    have_conpty = False
+                    conpty = None
 
-            if have_conpty:
+            if conpty is not None:
                 def reader():
+                    print("[terminal] ConPTY reader thread started", flush=True)
                     while conpty.isalive():
                         try:
                             text = conpty.read()
-                        except Exception:
+                        except Exception as e:
+                            print(f"[terminal] ConPTY read error: {e}", flush=True)
                             break
                         if not text:
-                            break
-                        send({"type": "output", "data": ANSI_ESCAPE.sub("", text)})
+                            print("[terminal] ConPTY read returned empty", flush=True)
+                            continue          # ← DON'T break on empty, just retry
+                        print(f"[terminal] ConPTY output ({len(text)} bytes): {text[:120]!r}", flush=True)
+                        send({"type": "output", "data": text})
+                    print("[terminal] ConPTY reader exiting", flush=True)
                     send({"type": "output", "data": "\r\n[shell exited]\r\n"})
+
                 threading.Thread(target=reader, daemon=True).start()
 
                 while True:
@@ -719,34 +722,48 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                     if opcode == 0x8 or msg is None:
                         break
                     if opcode == 0x9:
-                        with ws_lock:
-                            self._ws_handle_ping(msg)
+                        with ws_lock: self._ws_handle_ping(msg)
                         continue
                     try:
                         data = json.loads(msg)
                         if data.get("type") == "input":
+                            print(f"[terminal] input → ConPTY: {data.get('data','')!r}", flush=True)
                             conpty.write(data.get("data", ""))
+                        elif data.get("type") == "resize":
+                            try:
+                                conpty.set_size(data.get("cols", 80), data.get("rows", 24))
+                            except Exception:
+                                pass
                     except Exception:
                         pass
             else:
-                # Pipe fallback — works for commands, but install pywinpty for full interactivity
-                send({"type": "output", "data": "[pywinpty not found — interactive programs limited. Install with: pip install pywinpty]\r\n"})
+                # ---- Pipe fallback ----
+                print("[terminal] starting pipe fallback: cmd.exe /K", flush=True)
+                send({"type": "output", "data": "[pywinpty not found — limited mode. Install: pip install pywinpty]\r\n"})
                 proc = subprocess.Popen(
-                    ["cmd.exe", "/Q", "/K"],
+                    ["cmd.exe", "/K"],
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     env=env, cwd=os.getcwd(),
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
                 )
+                print(f"[terminal] cmd.exe started, pid={proc.pid}", flush=True)
+
                 def reader():
+                    print("[terminal] pipe reader thread started", flush=True)
                     while True:
                         try:
-                            chunk = proc.stdout.read1(4096)   # read1 = stream what's available (fixes the freeze)
-                        except Exception:
+                            chunk = proc.stdout.read1(4096)
+                        except Exception as e:
+                            print(f"[terminal] pipe read error: {e}", flush=True)
                             break
                         if not chunk:
+                            print("[terminal] pipe read returned empty — cmd exited?", flush=True)
                             break
-                        send({"type": "output", "data": chunk.decode("utf-8", errors="replace")})
+                        text = chunk.decode("utf-8", errors="replace")
+                        print(f"[terminal] pipe output ({len(text)} bytes): {text[:120]!r}", flush=True)
+                        send({"type": "output", "data": text})
                     send({"type": "output", "data": "\r\n[shell exited]\r\n"})
+
                 threading.Thread(target=reader, daemon=True).start()
 
                 while True:
@@ -756,12 +773,12 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                         except Exception: pass
                         break
                     if opcode == 0x9:
-                        with ws_lock:
-                            self._ws_handle_ping(msg)
+                        with ws_lock: self._ws_handle_ping(msg)
                         continue
                     try:
                         data = json.loads(msg)
                         if data.get("type") == "input" and proc.poll() is None:
+                            print(f"[terminal] input → pipe: {data.get('data','')!r}", flush=True)
                             proc.stdin.write(data.get("data", "").encode("utf-8"))
                             proc.stdin.flush()
                     except Exception:

@@ -1,0 +1,39 @@
+name: "Soft Round"
+author: "Jupy Samples"
+version: 1
+shape:
+  radius_sm: 10px
+  radius_md: 14px
+  border_width: 0px
+  shadow_style: soft
+cells:
+  card:
+    radius: 14px
+    border_width: 0px
+    shadow: soft
+    padding: 14px
+    spacing: 14px
+  gutter:
+    run_radius: 50%
+    run_size: 28px
+  editor:
+    border_width: 0px
+    radius: 10px
+    background: "#F3F4F6"
+  output:
+    border_width: 0px
+    radius: 10px
+    background: "#F9FAFB"
+  toolbar:
+    idle_opacity: 0.35
+  markdown:
+    font_size: 1.08rem
+colors:
+  light:
+    primary: "#DD614C"
+    secondary: "#DAA144"
+    surface: "#FFFFFF"
+    text: "#111827"
+    bg_well: "#F3F4F6"
+    border: "#E5E7EB"
+    shadow: "#9CA3AF"
