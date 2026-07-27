@@ -680,7 +680,7 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
             try:
                 import winpty
                 have_conpty = True
-                print("[terminal] pywinpty FOUND — using ConPTY", flush=True)
+                # print("[terminal] pywinpty FOUND — using ConPTY", flush=True)
             except ImportError:
                 have_conpty = False
                 print("[terminal] pywinpty NOT FOUND — will use pipe fallback", flush=True)
@@ -692,27 +692,27 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                     # pywinpty 1.x needs env as a null-separated string, not a dict
                     env_str = "\0".join(f"{k}={v}" for k, v in env.items()) + "\0\0"
                     conpty.spawn("cmd.exe", cwd=os.getcwd(), env=env_str)
-                    print(f"[terminal] ConPTY spawned OK, alive={conpty.isalive()}", flush=True)
+                    # print(f"[terminal] ConPTY spawned OK, alive={conpty.isalive()}", flush=True)
                 except Exception as e:
-                    print(f"[terminal] ConPTY FAILED: {e}", flush=True)
+                    # print(f"[terminal] ConPTY FAILED: {e}", flush=True)
                     send({"type": "output", "data": f"ConPTY failed ({e}); falling back to pipes.\r\n"})
                     conpty = None
 
             if conpty is not None:
                 def reader():
-                    print("[terminal] ConPTY reader thread started", flush=True)
+                    # print("[terminal] ConPTY reader thread started", flush=True)
                     while conpty.isalive():
                         try:
                             text = conpty.read()
                         except Exception as e:
-                            print(f"[terminal] ConPTY read error: {e}", flush=True)
+                            # print(f"[terminal] ConPTY read error: {e}", flush=True)
                             break
                         if not text:
-                            print("[terminal] ConPTY read returned empty", flush=True)
+                            # print("[terminal] ConPTY read returned empty", flush=True)
                             continue          # ← DON'T break on empty, just retry
-                        print(f"[terminal] ConPTY output ({len(text)} bytes): {text[:120]!r}", flush=True)
+                        # print(f"[terminal] ConPTY output ({len(text)} bytes): {text[:120]!r}", flush=True)
                         send({"type": "output", "data": text})
-                    print("[terminal] ConPTY reader exiting", flush=True)
+                    # print("[terminal] ConPTY reader exiting", flush=True)
                     send({"type": "output", "data": "\r\n[shell exited]\r\n"})
 
                 threading.Thread(target=reader, daemon=True).start()
@@ -727,7 +727,7 @@ body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 
                     try:
                         data = json.loads(msg)
                         if data.get("type") == "input":
-                            print(f"[terminal] input → ConPTY: {data.get('data','')!r}", flush=True)
+                            # print(f"[terminal] input → ConPTY: {data.get('data','')!r}", flush=True)
                             conpty.write(data.get("data", ""))
                         elif data.get("type") == "resize":
                             try:

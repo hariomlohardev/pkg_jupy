@@ -157,7 +157,7 @@ export function setupTerminal(toggleBtn, closeBtn, panel, screen, _o, _i, _p, on
 
     // every keystroke → PTY
     term.onData((data) => {
-      console.log('[terminal] key →', JSON.stringify(data)); 
+      // console.log('[terminal] key →', JSON.stringify(data)); 
       ensureSocket();
       send({ type: 'input', data });
     });
