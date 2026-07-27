@@ -4,7 +4,7 @@ jupy/__init__.py
 jupy/__main__.py
 jupy/cli.py
 jupy/combine.py
-jupy/server.py
+jupy/run_notebook.py
 jupy.egg-info/PKG-INFO
 jupy.egg-info/SOURCES.txt
 jupy.egg-info/dependency_links.txt
@@ -12,10 +12,12 @@ jupy.egg-info/top_level.txt
 jupy/core/__init__.py
 jupy/core/autocomplete.py
 jupy/core/envmanager.py
-jupy/core/kernel.py
 jupy/core/metrics.py
 jupy/core/terminal.py
 jupy/core/venv.py
+jupy/core/kernel/__init__.py
+jupy/core/kernel/manager.py
+jupy/core/kernel/worker_script.py
 jupy/server/__init__.py
 jupy/server/handlers.py
 jupy/server/protocol.py
