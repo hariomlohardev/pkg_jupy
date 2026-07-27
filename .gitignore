@@ -1,3 +1,28 @@
-.jupy_env/
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+
+# Build
+build/
+dist/
+wheels/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupy runtime folders
 .jupy/
-jupy\combine.py
+.jupy_env/
+
+# Compiled code dumps
+files.md
+
+# Editors
+.vscode/
+.idea/

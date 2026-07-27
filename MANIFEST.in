@@ -1,0 +1,22 @@
+include README.md
+include LICENSE
+include pyproject.toml
+
+recursive-include jupy/static *
+
+recursive-exclude jupy/static *.pyc
+recursive-exclude jupy/static *.pyo
+
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude __pycache__/*
+global-exclude files.md
+
+prune .jupy
+prune .jupy_env
+prune .git
+prune .venv
+prune venv
+prune build
+prune dist
+prune *.egg-info
