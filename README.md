@@ -19,7 +19,7 @@ Everything runs locally on your machine.
   <a href="https://pypi.org/project/jupy-notebook/">
     <img src="https://img.shields.io/pypi/pyversions/jupy-notebook.svg" alt="Python versions" />
   </a>
-  <a href="https://github.com/hariomlohardev/pkg_jupy/LICENSE">
+  <a href="https://github.com/hariomlohardev/pkg_jupy/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/hariomlohardev/pkg_jupy.svg" alt="License" />
   </a>
   <a href="https://github.com/hariomlohardev/pkg_jupy/issues">
